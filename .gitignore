@@ -1,0 +1,28 @@
+# Python and Node dependencies
+venv/
+node_modules/
+dist/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment & Secrets
+.env
+.env.local
+.env.production
+
+# Database & Storage
+pet_booking.db
+*.sqlite3
+*.db
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+
+# Cloudflared
+cloudflared.exe

@@ -1,0 +1,177 @@
+@import "tailwindcss";
+
+@config "../tailwind.config.js";
+
+@theme {
+  --color-teal-primary: #01C2CB;
+  --color-teal-dark: #039AA4;
+  --color-teal-deep: #046F79;
+  --color-teal-light: #3DD3DA;
+  --color-teal-veryLight: #D6F6F8;
+  --color-teal-very-light: #D6F6F8;
+  --color-teal-bg: #EEFBFC;
+
+  --color-plum-deep: #2B1533;
+  --color-plum-dark: #3E2049;
+  --color-plum-primary: #593563;
+  --color-plum-light: #734B7E;
+  --color-plum-soft: #D9C6E0;
+  --color-plum-bg: #F6F0F8;
+
+  --color-gold-dark: #D9971A;
+  --color-gold-primary: #F5B32B;
+  --color-gold-light: #FFC94D;
+  --color-gold-soft: #FFEFC9;
+  --color-gold-bg: #FFF8E9;
+
+  --font-sans: 'Manrope', 'IBM Plex Sans Arabic', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Bricolage Grotesque', sans-serif;
+  --font-bricolage: 'Bricolage Grotesque', sans-serif;
+  --font-manrope: 'Manrope', sans-serif;
+  --font-arabic: 'IBM Plex Sans Arabic', sans-serif;
+
+  --shadow-plum-sm: 0 4px 14px 0 rgba(43, 21, 51, 0.06);
+  --shadow-plum-md: 0 8px 30px -4px rgba(43, 21, 51, 0.10);
+  --shadow-plum-lg: 0 16px 40px -8px rgba(43, 21, 51, 0.16);
+  --shadow-plum-glow: 0 0 25px -4px rgba(89, 53, 99, 0.35);
+  --shadow-teal-glow: 0 0 25px -4px rgba(1, 194, 203, 0.35);
+  --shadow-gold-glow: 0 0 20px -3px rgba(245, 179, 43, 0.40);
+}
+
+@layer base {
+  :root {
+    --teal-primary: #01C2CB;
+    --teal-dark: #039AA4;
+    --teal-deep: #046F79;
+    --teal-light: #3DD3DA;
+    --teal-very-light: #D6F6F8;
+    --teal-bg: #EEFBFC;
+
+    --plum-deep: #2B1533;
+    --plum-dark: #3E2049;
+    --plum-primary: #593563;
+    --plum-light: #734B7E;
+    --plum-soft: #D9C6E0;
+    --plum-bg: #F6F0F8;
+
+    --gold-dark: #D9971A;
+    --gold-primary: #F5B32B;
+    --gold-light: #FFC94D;
+    --gold-soft: #FFEFC9;
+    --gold-bg: #FFF8E9;
+
+    font-family: 'Manrope', 'IBM Plex Sans Arabic', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color-scheme: light;
+    background-color: #FAF8FC;
+    color: #2B1533;
+  }
+
+  h1, h2, h3, h4, h5, h6, .font-display, .font-bricolage {
+    font-family: 'Bricolage Grotesque', sans-serif;
+    letter-spacing: -0.02em;
+  }
+}
+
+/* Glassmorphism & Surface utilities */
+.glass-effect {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(217, 198, 224, 0.6);
+}
+
+.glass-card {
+  background: #ffffff;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid #D9C6E0;
+  box-shadow: 0 10px 30px -5px rgba(43, 21, 51, 0.05), 0 4px 12px -2px rgba(43, 21, 51, 0.03);
+}
+
+.glass-card-plum,
+.glass-card-purple {
+  background: linear-gradient(145deg, #ffffff 0%, #F6F0F8 100%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid #D9C6E0;
+  box-shadow: 0 12px 35px -8px rgba(43, 21, 51, 0.08);
+}
+
+.glass-card-teal {
+  background: linear-gradient(145deg, #ffffff 0%, #EEFBFC 100%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid #D6F6F8;
+  box-shadow: 0 12px 35px -8px rgba(1, 194, 203, 0.09);
+}
+
+.glass-card-dark {
+  background: rgba(43, 21, 51, 0.96);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(217, 198, 224, 0.25);
+  box-shadow: 0 16px 40px -10px rgba(43, 21, 51, 0.5);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: #F6F0F8;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D9C6E0;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #734B7E;
+}
+
+/* Animation utilities */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+@keyframes pulse-subtle {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.02);
+    opacity: 0.96;
+  }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 3s infinite ease-in-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

@@ -1,0 +1,19 @@
+/* App.css — My Pet Center Custom Utilities */
+
+.text-gradient-plum {
+  background: linear-gradient(135deg, #2B1533 0%, #593563 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.text-gradient-teal {
+  background: linear-gradient(135deg, #01C2CB 0%, #039AA4 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.bg-hero-gradient {
+  background: radial-gradient(circle at 85% 15%, rgba(1, 194, 203, 0.15) 0%, transparent 40%),
+              radial-gradient(circle at 15% 85%, rgba(89, 53, 99, 0.3) 0%, transparent 45%),
+              linear-gradient(135deg, #2B1533 0%, #3E2049 50%, #16081B 100%);
+}

@@ -1,0 +1,147 @@
+from datetime import date, time, datetime
+from typing import Optional, List
+from decimal import Decimal
+from pydantic import BaseModel, Field
+
+# --- Auth & User Schemas ---
+class UserRegister(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    phone: str = Field(..., min_length=10, max_length=15)
+    password: str = Field(..., min_length=6, max_length=100)
+    email: Optional[str] = None
+
+class UserLogin(BaseModel):
+    phone: str = Field(..., min_length=3, max_length=100)  # Accepts phone or email identifier
+    password: str = Field(..., min_length=1)
+
+class AdminLogin(BaseModel):
+    email: str = Field(..., min_length=3, max_length=100)
+    password: str = Field(..., min_length=1)
+
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    phone: str
+    email: Optional[str] = None
+    role: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+
+# --- Settings ---
+class SettingBase(BaseModel):
+    key: str
+    value: str
+
+    class Config:
+        from_attributes = True
+
+class SettingUpdate(BaseModel):
+    value: str
+
+# --- Services ---
+class ServiceBase(BaseModel):
+    name: str
+    pet_type: str  # 'dog' or 'cat'
+    pet_size: str  # 'small', 'large', or 'any'
+    original_price: Decimal
+    discounted_price: Decimal
+    discount_percentage: int = 50
+    duration: int  # in minutes
+    description: Optional[str] = None
+    active: Optional[bool] = True
+
+class ServiceCreate(ServiceBase):
+    pass
+
+class ServiceUpdate(BaseModel):
+    name: Optional[str] = None
+    pet_type: Optional[str] = None
+    pet_size: Optional[str] = None
+    original_price: Optional[Decimal] = None
+    discounted_price: Optional[Decimal] = None
+    discount_percentage: Optional[int] = None
+    duration: Optional[int] = None
+    description: Optional[str] = None
+    active: Optional[bool] = None
+
+class ServiceResponse(ServiceBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+# --- Pet ---
+class PetBase(BaseModel):
+    type: str  # 'dog' or 'cat'
+    breed: Optional[str] = None
+    size: Optional[str] = None  # 'small' or 'large'
+
+class PetResponse(PetBase):
+    id: int
+    user_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+# --- Booking Creation Request ---
+class BookingCreate(BaseModel):
+    pet_type: Optional[str] = "pet"
+    pet_breed: Optional[str] = None
+    pet_size: Optional[str] = None
+    service_id: Optional[int] = None
+    booking_date: date
+    start_time: time  # e.g. 15:30
+    special_notes: Optional[str] = None
+
+# --- Booking Response ---
+class BookingResponse(BaseModel):
+    id: int
+    booking_id: str
+    user: UserResponse
+    pet: PetResponse
+    service: ServiceResponse
+    booking_date: date
+    start_time: time
+    end_time: time
+    price: Decimal
+    special_notes: Optional[str] = None
+    status: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+# --- Booking Status / Reschedule / Block ---
+class BookingStatusUpdate(BaseModel):
+    status: str = Field(..., pattern="^(confirmed|completed|no-show|blocked)$")
+
+class BookingReschedule(BaseModel):
+    booking_date: date
+    start_time: time
+
+class AdminBlockSlotRequest(BaseModel):
+    booking_date: date
+    start_time: time
+    duration: Optional[int] = 60
+    reason: Optional[str] = "Admin Slot Block / Maintenance"
+
+# --- Availability Slot Response ---
+class TimeSlot(BaseModel):
+    time: time
+    available: bool
+
+# --- Dashboard Statistics ---
+class DashboardStats(BaseModel):
+    today_count: int
+    upcoming_count: int
+    recent_bookings: List[BookingResponse]
+    capacity_percentage: float
