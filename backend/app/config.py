@@ -8,11 +8,10 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "my_pet_center_secure_jwt_secret_key_2026_zx98"
     ADMIN_EMAIL: str = "admin@mypetcenter.com"
     ADMIN_PHONE: str = "01200888841"
-    ADMIN_PASSWORD: str = "admin123"
+    ADMIN_PASSWORD: str = "MyPetCenter#2026!Admin"
 
     class Config:
         env_file = ".env"
         extra = "ignore"
 
 settings = Settings()
-

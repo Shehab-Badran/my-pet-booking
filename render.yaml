@@ -1,12 +1,21 @@
+databases:
+  - name: my-pet-center-db
+    databaseName: mypetcenter
+    user: mypetcenter_user
+    plan: free
+
 services:
   - type: web
     name: my-pet-center
     env: python
+    plan: free
     buildCommand: "cd frontend && npm install && npm run build && cd .. && pip install -r backend/requirements.txt"
-    startCommand: "uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT"
+    startCommand: "python -m backend.app.seed && uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT"
     envVars:
       - key: DATABASE_URL
-        generateValue: true
+        fromDatabase:
+          name: my-pet-center-db
+          property: connectionString
       - key: JWT_SECRET
         generateValue: true
       - key: ADMIN_EMAIL
@@ -14,4 +23,6 @@ services:
       - key: ADMIN_PHONE
         value: "01200888841"
       - key: ADMIN_PASSWORD
-        sync: false
+        value: "MyPetCenter#2026!Admin"
+      - key: PYTHONPATH
+        value: "."
