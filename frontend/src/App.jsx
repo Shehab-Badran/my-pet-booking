@@ -85,47 +85,100 @@ export default function App() {
     handleNavigate('confirmation');
   };
 
-  const handleAuthSubmit = (e) => {
+  const normalizeClientPhone = (p) => {
+    if (!p) return '';
+    const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
+    let cleaned = String(p).split('').map(c => {
+      const idx = arabicDigits.indexOf(c);
+      return idx > -1 ? idx.toString() : c;
+    }).join('').replace(/\D/g, '');
+
+    if (cleaned.startsWith('0020')) {
+      cleaned = cleaned.slice(4);
+    } else if (cleaned.startsWith('20') && cleaned.length >= 11) {
+      cleaned = cleaned.slice(2);
+    }
+
+    if (cleaned.length === 10 && (cleaned.startsWith('10') || cleaned.startsWith('11') || cleaned.startsWith('12') || cleaned.startsWith('15'))) {
+      cleaned = '0' + cleaned;
+    }
+    return cleaned;
+  };
+
+  const handleAuthSubmit = async (e) => {
     e.preventDefault();
     setAuthError('');
+
+    const cleanName = authName.trim();
+    const cleanPhone = normalizeClientPhone(authPhone) || authPhone.trim();
+    const cleanPassword = authPassword.trim();
+
+    if (authTab === 'register') {
+      if (!cleanName || cleanName.length < 2) {
+        setAuthError('Please enter your full name (at least 2 characters).');
+        return;
+      }
+      if (!cleanPhone || cleanPhone.length < 9) {
+        setAuthError('Please enter a valid phone number (e.g. 01200888841).');
+        return;
+      }
+      if (!cleanPassword || cleanPassword.length < 6) {
+        setAuthError('Password must be at least 6 characters.');
+        return;
+      }
+    } else {
+      if (!cleanPhone) {
+        setAuthError('Please enter your phone number or email.');
+        return;
+      }
+      if (!cleanPassword) {
+        setAuthError('Please enter your password.');
+        return;
+      }
+    }
+
     setAuthLoading(true);
 
-    const endpoint = authTab === 'register' ? '/auth/register' : '/auth/login';
-    const payload =
-      authTab === 'register'
-        ? { name: authName.trim(), phone: authPhone.trim(), password: authPassword.trim() }
-        : { phone: authPhone.trim(), password: authPassword.trim() };
+    try {
+      const endpoint = authTab === 'register' ? '/auth/register' : '/auth/login';
+      const payload =
+        authTab === 'register'
+          ? { name: cleanName, phone: cleanPhone, password: cleanPassword }
+          : { phone: cleanPhone, password: cleanPassword };
 
-    fetch(`${API_BASE_URL}${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-      .then(async (res) => {
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.detail || 'Authentication failed.');
-        }
-        return data;
-      })
-      .then((data) => {
-        setAuthLoading(false);
-        localStorage.setItem('mpc_token', data.access_token);
-        setCurrentUser(data.user);
-        setAuthModalOpen(false);
-        setAuthName('');
-        setAuthPhone('');
-        setAuthPassword('');
-
-        // If the logged in user is an Admin, immediately open the Admin Dashboard!
-        if (data.user?.role === 'admin') {
-          handleNavigate('admin');
-        }
-      })
-      .catch((err) => {
-        setAuthLoading(false);
-        setAuthError(err.message);
+      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
+
+      const data = await res.json();
+      if (!res.ok) {
+        let errorMsg = 'Authentication failed. Please check your details.';
+        if (typeof data.detail === 'string') {
+          errorMsg = data.detail;
+        } else if (Array.isArray(data.detail)) {
+          errorMsg = data.detail.map((d) => d.msg || 'Invalid field').join(', ');
+        }
+        throw new Error(errorMsg);
+      }
+
+      setAuthLoading(false);
+      localStorage.setItem('mpc_token', data.access_token);
+      setCurrentUser(data.user);
+      setAuthModalOpen(false);
+      setAuthName('');
+      setAuthPhone('');
+      setAuthPassword('');
+
+      // If the logged in user is an Admin, immediately open the Admin Dashboard!
+      if (data.user?.role === 'admin') {
+        handleNavigate('admin');
+      }
+    } catch (err) {
+      setAuthLoading(false);
+      setAuthError(err.message || 'An error occurred during authentication.');
+    }
   };
 
   const handleLogout = () => {

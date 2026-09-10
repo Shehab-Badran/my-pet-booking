@@ -72,18 +72,47 @@ def update_service(db: Session, service_id: int, service_update: schemas.Service
 
 # --- User & Auth Operations ---
 
+def normalize_phone_number(phone_str: str) -> str:
+    """Normalize phone input (ASCII, Arabic digits, spaces, country codes)."""
+    if not phone_str:
+        return ""
+    arabic_to_ascii = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+    cleaned = str(phone_str).translate(arabic_to_ascii).strip()
+    
+    # Extract only digits
+    cleaned = "".join([c for c in cleaned if c.isdigit()])
+    
+    # Handle Egypt country code 20 / 0020
+    if cleaned.startswith("0020"):
+        cleaned = cleaned[4:]
+    elif cleaned.startswith("20") and len(cleaned) >= 11:
+        cleaned = cleaned[2:]
+    
+    # Ensure leading zero for Egyptian mobile operators (010, 011, 012, 015)
+    if cleaned.startswith(("10", "11", "12", "15")) and len(cleaned) == 10:
+        cleaned = "0" + cleaned
+
+    return cleaned
+
 def get_user_by_phone(db: Session, phone: str) -> Optional[models.User]:
-    clean_phone = phone.strip()
-    return db.query(models.User).filter(models.User.phone == clean_phone).first()
+    clean_phone = normalize_phone_number(phone)
+    return db.query(models.User).filter(
+        or_(
+            models.User.phone == clean_phone,
+            models.User.phone == phone.strip()
+        )
+    ).first()
 
 def get_user_by_email(db: Session, email: str) -> Optional[models.User]:
     clean_email = email.strip().lower()
     return db.query(models.User).filter(models.User.email == clean_email).first()
 
 def get_user_by_identifier(db: Session, identifier: str) -> Optional[models.User]:
+    clean_phone = normalize_phone_number(identifier)
     clean_id = identifier.strip()
     return db.query(models.User).filter(
         or_(
+            models.User.phone == clean_phone,
             models.User.phone == clean_id,
             models.User.email == clean_id.lower()
         )
@@ -100,8 +129,8 @@ def create_user(
     role: str = "customer",
     email: Optional[str] = None
 ) -> models.User:
-    clean_phone = phone.strip()
-    clean_email = email.strip().lower() if email else None
+    clean_phone = normalize_phone_number(phone) or phone.strip()
+    clean_email = email.strip().lower() if email and email.strip() else None
     user = models.User(
         name=name.strip(),
         phone=clean_phone,
