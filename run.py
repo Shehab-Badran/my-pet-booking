@@ -30,12 +30,10 @@ def setup_venv():
     if not os.path.exists(VENV_DIR):
         log("SETUP", "Creating virtual environment in venv/ ...")
         subprocess.check_call([sys.executable, "-m", "venv", "venv"])
+        log("SETUP", "Installing backend dependencies...")
+        subprocess.check_call([PIP_EXE, "install", "-r", os.path.join(BACKEND_DIR, "requirements.txt")])
     else:
-        log("SETUP", "Virtual environment venv/ already exists.")
-
-    log("SETUP", "Installing backend dependencies...")
-    subprocess.check_call([PYTHON_EXE, "-m", "pip", "install", "--upgrade", "pip"])
-    subprocess.check_call([PIP_EXE, "install", "-r", os.path.join(BACKEND_DIR, "requirements.txt")])
+        log("SETUP", "Virtual environment venv/ is ready.")
 
 
 def seed_database():
@@ -49,11 +47,10 @@ def seed_database():
 def setup_frontend():
     if not os.path.exists(os.path.join(FRONTEND_DIR, "node_modules")):
         log("SETUP", "Installing frontend node dependencies (npm install)...")
-        # Run npm install on windows shell or unix shell
         shell = sys.platform == "win32"
         subprocess.check_call(["npm", "install"], cwd=FRONTEND_DIR, shell=shell)
     else:
-        log("SETUP", "Frontend node_modules already installed.")
+        log("SETUP", "Frontend node_modules is ready.")
 
 
 def run_process_and_log(cmd, cwd, prefix, env=None):
@@ -69,11 +66,14 @@ def run_process_and_log(cmd, cwd, prefix, env=None):
         env=env
     )
     
-    # Read output line by line and print with prefix
-    for line in iter(p.stdout.readline, ""):
-        print(f"[{prefix}] {line.strip()}")
-    p.stdout.close()
-    p.wait()
+    try:
+        for line in iter(p.stdout.readline, ""):
+            if line:
+                print(f"[{prefix}] {line.rstrip()}")
+    finally:
+        if p.stdout:
+            p.stdout.close()
+        p.wait()
     return p
 
 
