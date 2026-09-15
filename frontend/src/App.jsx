@@ -75,6 +75,10 @@ export default function App() {
       if (qIdx !== -1) {
         const hashParams = new URLSearchParams(hashStr.substring(qIdx));
         token = hashParams.get('token');
+      } else if (hashStr.includes('token=')) {
+        const cleanHash = hashStr.startsWith('#') ? hashStr.substring(1) : hashStr;
+        const hashParams = new URLSearchParams(cleanHash);
+        token = hashParams.get('token');
       }
     }
 
@@ -132,19 +136,18 @@ export default function App() {
         });
     }
 
-    const checkAdminRoute = () => {
-      if (window.location.hash === '#admin' || window.location.pathname.startsWith('/admin')) {
-        setCurrentPage('admin');
-      }
+    const handleRouteChange = () => {
+      checkAdminRoute();
+      checkForResetToken();
     };
     checkAdminRoute();
     checkForResetToken();
 
-    window.addEventListener('hashchange', checkAdminRoute);
-    window.addEventListener('popstate', checkAdminRoute);
+    window.addEventListener('hashchange', handleRouteChange);
+    window.addEventListener('popstate', handleRouteChange);
     return () => {
-      window.removeEventListener('hashchange', checkAdminRoute);
-      window.removeEventListener('popstate', checkAdminRoute);
+      window.removeEventListener('hashchange', handleRouteChange);
+      window.removeEventListener('popstate', handleRouteChange);
     };
   }, []);
 

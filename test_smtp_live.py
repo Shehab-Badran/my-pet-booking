@@ -38,7 +38,7 @@ def run_smtp_verification():
         assert success == True, f"Failed to send email: success={success}"
         
         # Verify SMTP connection params
-        mock_smtp_class.assert_called_once_with("smtp.gmail.com", 587, timeout=10)
+        mock_smtp_class.assert_called_once_with("smtp.gmail.com", 587, timeout=15)
         mock_smtp_instance.starttls.assert_called_once()
         mock_smtp_instance.login.assert_called_once_with("bookings@mypetcenter.com", "app-password-1234")
         

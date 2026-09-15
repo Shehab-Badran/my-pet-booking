@@ -11,8 +11,9 @@ def is_smtp_configured() -> bool:
     """Check if SMTP credentials and host are fully configured."""
     return bool(
         settings.SMTP_HOST
-        and settings.SMTP_PORT
+        and str(settings.SMTP_HOST).strip()
         and settings.SMTP_FROM_EMAIL
+        and str(settings.SMTP_FROM_EMAIL).strip()
     )
 
 def send_password_reset_email(to_email: str, recipient_name: str, reset_token: str) -> bool:
@@ -24,15 +25,15 @@ def send_password_reset_email(to_email: str, recipient_name: str, reset_token: s
     reset_url = f"{frontend_url}/#reset-password?token={reset_token}"
 
     if not is_smtp_configured():
-        logger.info(
-            f"[EMAIL SERVICE] SMTP host not configured. Password reset requested for: {to_email}. "
-            "To enable live email delivery, configure SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, "
-            "SMTP_FROM_EMAIL, and FRONTEND_URL environment variables."
+        logger.warning(
+            f"[EMAIL SERVICE] SMTP host not configured. Password reset email requested for: {to_email}. "
+            "To enable live email delivery to customer inboxes, configure SMTP_HOST, SMTP_PORT, "
+            "SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL, and FRONTEND_URL environment variables."
         )
         return False
 
     sender_name = settings.SMTP_FROM_NAME or "My Pet Center"
-    sender_email = settings.SMTP_FROM_EMAIL
+    sender_email = settings.SMTP_FROM_EMAIL.strip()
     from_header = f"{sender_name} <{sender_email}>"
 
     subject = "Reset Your My Pet Center Password"
@@ -158,29 +159,39 @@ Phone: 01200888841
     message["From"] = from_header
     message["To"] = to_email
 
-    part1 = MIMEText(text_content, "plain")
-    part2 = MIMEText(html_content, "html")
+    part1 = MIMEText(text_content, "plain", "utf-8")
+    part2 = MIMEText(html_content, "html", "utf-8")
     message.attach(part1)
     message.attach(part2)
 
     try:
-        if settings.SMTP_PORT == 465:
+        smtp_port = int(settings.SMTP_PORT) if settings.SMTP_PORT else 587
+        smtp_host = str(settings.SMTP_HOST).strip()
+
+        if smtp_port == 465:
             context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, context=context, timeout=10) as server:
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context, timeout=15) as server:
                 if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
-                    server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-                server.sendmail(sender_email, to_email, message.as_string())
+                    server.login(str(settings.SMTP_USERNAME).strip(), str(settings.SMTP_PASSWORD).strip())
+                server.sendmail(sender_email, [to_email], message.as_string())
         else:
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
                 server.ehlo()
-                context = ssl.create_default_context()
-                server.starttls(context=context)
-                server.ehlo()
+                try:
+                    context = ssl.create_default_context()
+                    server.starttls(context=context)
+                    server.ehlo()
+                except Exception as tls_err:
+                    logger.debug(f"[EMAIL SERVICE] STARTTLS notice: {tls_err}")
+
                 if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
-                    server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-                server.sendmail(sender_email, to_email, message.as_string())
+                    server.login(str(settings.SMTP_USERNAME).strip(), str(settings.SMTP_PASSWORD).strip())
+                server.sendmail(sender_email, [to_email], message.as_string())
+
         logger.info(f"[EMAIL SERVICE] Successfully dispatched password reset email to: {to_email}")
         return True
     except Exception as e:
-        logger.error(f"[EMAIL SERVICE ERROR] Failed to send email to {to_email}: {type(e).__name__}")
+        # Safe logging of error reason without revealing passwords
+        err_msg = str(e).replace(str(settings.SMTP_PASSWORD or ""), "******")
+        logger.error(f"[EMAIL SERVICE ERROR] Failed to deliver password reset email to {to_email} via {settings.SMTP_HOST}: {type(e).__name__} ({err_msg})")
         return False
