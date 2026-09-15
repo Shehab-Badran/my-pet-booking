@@ -136,6 +136,12 @@ export default function App() {
         });
     }
 
+    const checkAdminRoute = () => {
+      if (window.location.hash === '#admin' || window.location.pathname.startsWith('/admin')) {
+        setCurrentPage('admin');
+      }
+    };
+
     const handleRouteChange = () => {
       checkAdminRoute();
       checkForResetToken();
