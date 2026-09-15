@@ -27,13 +27,12 @@ def override_get_db():
     finally:
         db.close()
 
-app.dependency_overrides[get_db] = override_get_db
-
 class TestAuthAndSecurity(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         Base.metadata.drop_all(bind=test_engine)
         Base.metadata.create_all(bind=test_engine)
+        app.dependency_overrides[get_db] = override_get_db
         cls.client = TestClient(app)
         
         # Seed settings
@@ -55,6 +54,13 @@ class TestAuthAndSecurity(unittest.TestCase):
         db.add(admin)
         db.commit()
         db.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        app.dependency_overrides.pop(get_db, None)
+
+    def setUp(self):
+        app.dependency_overrides[get_db] = override_get_db
 
     def test_01_normal_signup(self):
         """Test customer registration with Name, Email, Phone, and Password."""
@@ -159,6 +165,14 @@ class TestAuthAndSecurity(unittest.TestCase):
         """Test full password reset cycle: token verification, password reset, token invalidation, login with new password."""
         db = TestingSessionLocal()
         user = crud.get_user_by_email(db, "sarah.ali@example.com")
+        if not user:
+            user = crud.create_user(
+                db,
+                name="Sarah Ali",
+                email="sarah.ali@example.com",
+                phone="01011112222",
+                password_hash=auth.hash_password("securepassword123")
+            )
         token = crud.create_password_reset_token(db, user, expires_minutes=15)
         db.close()
 
@@ -205,6 +219,14 @@ class TestAuthAndSecurity(unittest.TestCase):
         """Test expired token is rejected."""
         db = TestingSessionLocal()
         user = crud.get_user_by_email(db, "sarah.ali@example.com")
+        if not user:
+            user = crud.create_user(
+                db,
+                name="Sarah Ali",
+                email="sarah.ali@example.com",
+                phone="01011112222",
+                password_hash=auth.hash_password("securepassword123")
+            )
         # Create an expired token (-5 minutes)
         token = crud.create_password_reset_token(db, user, expires_minutes=-5)
         db.close()

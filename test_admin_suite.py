@@ -26,13 +26,12 @@ def override_get_db():
     finally:
         db.close()
 
-app.dependency_overrides[get_db] = override_get_db
-
 class TestAdminDashboardAndRBAC(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         Base.metadata.drop_all(bind=test_engine)
         Base.metadata.create_all(bind=test_engine)
+        app.dependency_overrides[get_db] = override_get_db
         cls.client = TestClient(app)
 
         db = TestingSessionLocal()
@@ -88,6 +87,13 @@ class TestAdminDashboardAndRBAC(unittest.TestCase):
         ))
         cls.sample_booking_id = booking.id
         db.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        app.dependency_overrides.pop(get_db, None)
+
+    def setUp(self):
+        app.dependency_overrides[get_db] = override_get_db
 
     def test_01_customer_cannot_access_admin_endpoints(self):
         """Test RBAC: Customer receives 403 Forbidden when calling admin APIs."""

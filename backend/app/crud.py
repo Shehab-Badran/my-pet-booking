@@ -113,8 +113,18 @@ def get_user_by_email(db: Session, email: str) -> Optional[models.User]:
     return db.query(models.User).filter(models.User.email == clean_email).first()
 
 def get_user_by_identifier(db: Session, identifier: str) -> Optional[models.User]:
-    clean_phone = normalize_phone_number(identifier)
-    clean_id = identifier.strip()
+    if not identifier:
+        return None
+    clean_id = str(identifier).strip()
+    if not clean_id:
+        return None
+
+    # 1. If identifier contains '@', it is an email address
+    if "@" in clean_id:
+        return db.query(models.User).filter(models.User.email == clean_id.lower()).first()
+
+    # 2. Otherwise try Egyptian phone normalization and direct match
+    clean_phone = normalize_phone_number(clean_id)
     return db.query(models.User).filter(
         or_(
             models.User.phone == clean_phone,

@@ -191,6 +191,10 @@ export default function App() {
 
     const cleanName = authName.trim();
     const cleanEmail = authEmail.trim().toLowerCase();
+    const isEmailLogin = authPhone.includes('@');
+    const cleanIdentifier = isEmailLogin
+      ? authPhone.trim().toLowerCase()
+      : (normalizeClientPhone(authPhone) || authPhone.trim());
     const cleanPhone = normalizeClientPhone(authPhone) || authPhone.trim();
     const cleanPassword = authPassword.trim();
     const cleanConfirmPassword = authConfirmPassword.trim();
@@ -198,16 +202,16 @@ export default function App() {
     // Client-side validation
     if (authTab === 'register') {
       if (!cleanName || cleanName.length < 2) {
-        setAuthError('Please enter your full name (at least 2 characters).');
+        setAuthError('Please enter your full name.');
         return;
       }
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!cleanEmail || !emailRegex.test(cleanEmail)) {
-        setAuthError('Please enter a valid email address (e.g. name@example.com).');
+        setAuthError('Please enter a valid email address.');
         return;
       }
       if (!cleanPhone || cleanPhone.length < 9) {
-        setAuthError('Please enter a valid phone number (e.g. 01200888841).');
+        setAuthError('Please enter a valid Egyptian phone number.');
         return;
       }
       if (!cleanPassword || cleanPassword.length < 6) {
@@ -219,7 +223,7 @@ export default function App() {
         return;
       }
     } else if (authTab === 'login') {
-      if (!cleanPhone) {
+      if (!cleanIdentifier) {
         setAuthError('Please enter your phone number or email.');
         return;
       }
@@ -249,7 +253,7 @@ export default function App() {
               phone: cleanPhone,
               password: cleanPassword,
             }
-          : { phone: cleanPhone, password: cleanPassword };
+          : { phone: cleanIdentifier, password: cleanPassword };
 
       const res = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: 'POST',
@@ -263,7 +267,12 @@ export default function App() {
         if (typeof data.detail === 'string') {
           errorMsg = data.detail;
         } else if (Array.isArray(data.detail)) {
-          errorMsg = data.detail.map((d) => d.msg || 'Invalid field').join(', ');
+          errorMsg = data.detail
+            .map((d) => (typeof d === 'string' ? d : d.msg || 'Invalid field'))
+            .join(' ');
+        }
+        if (errorMsg.includes('String should have at least')) {
+          errorMsg = 'Please check your input details and try again.';
         }
         throw new Error(errorMsg);
       }
@@ -283,7 +292,11 @@ export default function App() {
       }
     } catch (err) {
       setAuthLoading(false);
-      setAuthError(err.message || 'An error occurred during authentication.');
+      let displayError = err.message || 'An error occurred during authentication.';
+      if (displayError.includes('String should have at least')) {
+        displayError = 'Please check your input details and try again.';
+      }
+      setAuthError(displayError);
     }
   };
 

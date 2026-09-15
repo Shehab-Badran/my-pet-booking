@@ -70,6 +70,9 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
 
   // Settings editing state
   const [editingSettings, setEditingSettings] = useState({});
+  const [savingSettings, setSavingSettings] = useState({});
+  const [savedSettings, setSavedSettings] = useState({});
+  const [errorSettings, setErrorSettings] = useState({});
 
   const getAdminToken = () => localStorage.getItem('mpc_token');
 
@@ -325,30 +328,52 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
       });
   };
 
-  // Save Setting
+  // Save Setting with immediate inline feedback and persistence
   const handleSaveSetting = (key, val) => {
     const token = getAdminToken();
+    const cleanVal = String(val ?? '').trim();
+
+    setSavingSettings((prev) => ({ ...prev, [key]: true }));
+    setErrorSettings((prev) => ({ ...prev, [key]: '' }));
+    setSavedSettings((prev) => ({ ...prev, [key]: false }));
+
     fetch(`${API_BASE_URL}/admin/settings/${key}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ value: val }),
+      body: JSON.stringify({ value: cleanVal }),
     })
       .then(async (res) => {
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Failed to update setting.');
+        if (!res.ok) {
+          let errDetail = 'Failed to update setting.';
+          if (typeof data.detail === 'string') errDetail = data.detail;
+          else if (Array.isArray(data.detail)) {
+            errDetail = data.detail.map((d) => (typeof d === 'string' ? d : d.msg || 'Invalid value')).join(' ');
+          }
+          throw new Error(errDetail);
+        }
         return data;
       })
-      .then(() => {
-        setActionSuccess(`Setting '${key}' updated to ${val}.`);
-        fetchServicesAndSettings();
+      .then((data) => {
+        setSavingSettings((prev) => ({ ...prev, [key]: false }));
+        setSavedSettings((prev) => ({ ...prev, [key]: true }));
+        setEditingSettings((prev) => ({ ...prev, [key]: data.value }));
+        setSettings((prev) => prev.map((s) => (s.key === key ? data : s)));
+        setActionSuccess(`Setting '${key}' saved successfully (${data.value}).`);
+        setTimeout(() => {
+          setSavedSettings((prev) => ({ ...prev, [key]: false }));
+        }, 3500);
         setTimeout(() => setActionSuccess(''), 4000);
       })
       .catch((err) => {
-        setActionError(err.message);
-        setTimeout(() => setActionError(''), 4000);
+        setSavingSettings((prev) => ({ ...prev, [key]: false }));
+        setErrorSettings((prev) => ({ ...prev, [key]: err.message || 'Could not save. Please try again.' }));
+        setTimeout(() => {
+          setErrorSettings((prev) => ({ ...prev, [key]: '' }));
+        }, 4500);
       });
   };
 
@@ -964,9 +989,16 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Working Hours */}
+              {/* Working Hours: Opening Time */}
               <div className="p-5 bg-plum-bg/40 rounded-2xl border border-plum-soft space-y-3">
-                <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Opening Time</h4>
+                <div className="flex justify-between items-center">
+                  <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Opening Time</h4>
+                  {savedSettings['opening_time'] && (
+                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md animate-fade-in">
+                      ✓ Saved
+                    </span>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -975,17 +1007,36 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                     className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-mono font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"
                   />
                   <button
+                    disabled={savingSettings['opening_time']}
                     onClick={() => handleSaveSetting('opening_time', editingSettings.opening_time)}
-                    className="bg-plum-deep hover:bg-plum-dark text-white font-bold text-xs px-4 py-2 rounded-xl cursor-pointer"
+                    className={`font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition-all ${
+                      savedSettings['opening_time']
+                        ? 'bg-emerald-600 text-white'
+                        : savingSettings['opening_time']
+                        ? 'bg-slate-300 text-slate-600 cursor-not-allowed'
+                        : 'bg-plum-deep hover:bg-plum-dark text-white'
+                    }`}
                   >
-                    Save
+                    {savingSettings['opening_time'] ? 'Saving...' : savedSettings['opening_time'] ? 'Saved ✓' : 'Save'}
                   </button>
                 </div>
-                <span className="text-[10px] text-slate-500">Default: 15:00:00 (3:00 PM)</span>
+                {errorSettings['opening_time'] ? (
+                  <span className="text-[11px] text-rose-600 font-semibold block">{errorSettings['opening_time']}</span>
+                ) : (
+                  <span className="text-[10px] text-slate-500">Default: 15:00:00 (3:00 PM)</span>
+                )}
               </div>
 
+              {/* Working Hours: Closing Time */}
               <div className="p-5 bg-plum-bg/40 rounded-2xl border border-plum-soft space-y-3">
-                <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Closing Time</h4>
+                <div className="flex justify-between items-center">
+                  <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Closing Time</h4>
+                  {savedSettings['closing_time'] && (
+                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md animate-fade-in">
+                      ✓ Saved
+                    </span>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -994,18 +1045,36 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                     className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-mono font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"
                   />
                   <button
+                    disabled={savingSettings['closing_time']}
                     onClick={() => handleSaveSetting('closing_time', editingSettings.closing_time)}
-                    className="bg-plum-deep hover:bg-plum-dark text-white font-bold text-xs px-4 py-2 rounded-xl cursor-pointer"
+                    className={`font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition-all ${
+                      savedSettings['closing_time']
+                        ? 'bg-emerald-600 text-white'
+                        : savingSettings['closing_time']
+                        ? 'bg-slate-300 text-slate-600 cursor-not-allowed'
+                        : 'bg-plum-deep hover:bg-plum-dark text-white'
+                    }`}
                   >
-                    Save
+                    {savingSettings['closing_time'] ? 'Saving...' : savedSettings['closing_time'] ? 'Saved ✓' : 'Save'}
                   </button>
                 </div>
-                <span className="text-[10px] text-slate-500">Default: 00:00:00 (12:00 AM midnight)</span>
+                {errorSettings['closing_time'] ? (
+                  <span className="text-[11px] text-rose-600 font-semibold block">{errorSettings['closing_time']}</span>
+                ) : (
+                  <span className="text-[10px] text-slate-500">Default: 00:00:00 (12:00 AM midnight)</span>
+                )}
               </div>
 
               {/* Internal Capacity */}
               <div className="p-5 bg-plum-bg/40 rounded-2xl border border-plum-soft space-y-3">
-                <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Max Simultaneous Bookings (Internal Capacity)</h4>
+                <div className="flex justify-between items-center">
+                  <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Max Simultaneous Bookings (Internal Capacity)</h4>
+                  {savedSettings['max_simultaneous_bookings'] && (
+                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md animate-fade-in">
+                      ✓ Saved
+                    </span>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <input
                     type="number"
@@ -1015,18 +1084,36 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                     className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-mono font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"
                   />
                   <button
+                    disabled={savingSettings['max_simultaneous_bookings']}
                     onClick={() => handleSaveSetting('max_simultaneous_bookings', editingSettings.max_simultaneous_bookings)}
-                    className="bg-plum-deep hover:bg-plum-dark text-white font-bold text-xs px-4 py-2 rounded-xl cursor-pointer"
+                    className={`font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition-all ${
+                      savedSettings['max_simultaneous_bookings']
+                        ? 'bg-emerald-600 text-white'
+                        : savingSettings['max_simultaneous_bookings']
+                        ? 'bg-slate-300 text-slate-600 cursor-not-allowed'
+                        : 'bg-plum-deep hover:bg-plum-dark text-white'
+                    }`}
                   >
-                    Save
+                    {savingSettings['max_simultaneous_bookings'] ? 'Saving...' : savedSettings['max_simultaneous_bookings'] ? 'Saved ✓' : 'Save'}
                   </button>
                 </div>
-                <span className="text-[10px] text-slate-500">Default: 1 simultaneous appointment. (Never shown to customers).</span>
+                {errorSettings['max_simultaneous_bookings'] ? (
+                  <span className="text-[11px] text-rose-600 font-semibold block">{errorSettings['max_simultaneous_bookings']}</span>
+                ) : (
+                  <span className="text-[10px] text-slate-500">Default: 1 simultaneous appointment. (Never shown to customers).</span>
+                )}
               </div>
 
               {/* Slot Interval (Minutes) */}
               <div className="p-5 bg-plum-bg/40 rounded-2xl border border-plum-soft space-y-3">
-                <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Booking Slot Interval (Minutes)</h4>
+                <div className="flex justify-between items-center">
+                  <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Booking Slot Interval (Minutes)</h4>
+                  {savedSettings['slot_interval_minutes'] && (
+                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md animate-fade-in">
+                      ✓ Saved
+                    </span>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <input
                     type="number"
@@ -1037,18 +1124,36 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                     className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-mono font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"
                   />
                   <button
+                    disabled={savingSettings['slot_interval_minutes']}
                     onClick={() => handleSaveSetting('slot_interval_minutes', editingSettings.slot_interval_minutes)}
-                    className="bg-plum-deep hover:bg-plum-dark text-white font-bold text-xs px-4 py-2 rounded-xl cursor-pointer"
+                    className={`font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition-all ${
+                      savedSettings['slot_interval_minutes']
+                        ? 'bg-emerald-600 text-white'
+                        : savingSettings['slot_interval_minutes']
+                        ? 'bg-slate-300 text-slate-600 cursor-not-allowed'
+                        : 'bg-plum-deep hover:bg-plum-dark text-white'
+                    }`}
                   >
-                    Save
+                    {savingSettings['slot_interval_minutes'] ? 'Saving...' : savedSettings['slot_interval_minutes'] ? 'Saved ✓' : 'Save'}
                   </button>
                 </div>
-                <span className="text-[10px] text-slate-500">Default: 60 minutes. Whole-hour slots only (3 PM, 4 PM, etc.).</span>
+                {errorSettings['slot_interval_minutes'] ? (
+                  <span className="text-[11px] text-rose-600 font-semibold block">{errorSettings['slot_interval_minutes']}</span>
+                ) : (
+                  <span className="text-[10px] text-slate-500">Default: 60 minutes. Whole-hour slots only (3 PM, 4 PM, etc.).</span>
+                )}
               </div>
 
               {/* Booking Window */}
               <div className="p-5 bg-plum-bg/40 rounded-2xl border border-plum-soft space-y-3">
-                <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Booking Window Ahead (Days)</h4>
+                <div className="flex justify-between items-center">
+                  <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Booking Window Ahead (Days)</h4>
+                  {savedSettings['max_booking_days_ahead'] && (
+                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md animate-fade-in">
+                      ✓ Saved
+                    </span>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <input
                     type="number"
@@ -1058,13 +1163,24 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                     className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-mono font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"
                   />
                   <button
+                    disabled={savingSettings['max_booking_days_ahead']}
                     onClick={() => handleSaveSetting('max_booking_days_ahead', editingSettings.max_booking_days_ahead)}
-                    className="bg-plum-deep hover:bg-plum-dark text-white font-bold text-xs px-4 py-2 rounded-xl cursor-pointer"
+                    className={`font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition-all ${
+                      savedSettings['max_booking_days_ahead']
+                        ? 'bg-emerald-600 text-white'
+                        : savingSettings['max_booking_days_ahead']
+                        ? 'bg-slate-300 text-slate-600 cursor-not-allowed'
+                        : 'bg-plum-deep hover:bg-plum-dark text-white'
+                    }`}
                   >
-                    Save
+                    {savingSettings['max_booking_days_ahead'] ? 'Saving...' : savedSettings['max_booking_days_ahead'] ? 'Saved ✓' : 'Save'}
                   </button>
                 </div>
-                <span className="text-[10px] text-slate-500">Default: 7 days ahead (Today + next 6 days).</span>
+                {errorSettings['max_booking_days_ahead'] ? (
+                  <span className="text-[11px] text-rose-600 font-semibold block">{errorSettings['max_booking_days_ahead']}</span>
+                ) : (
+                  <span className="text-[10px] text-slate-500">Default: 7 days ahead (Today + next 6 days).</span>
+                )}
               </div>
             </div>
           </div>

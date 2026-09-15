@@ -28,12 +28,12 @@ class UserRegister(BaseModel):
         return validate_email_format(v)
 
 class UserLogin(BaseModel):
-    phone: str = Field(..., min_length=3, max_length=100)  # Accepts phone or email identifier
-    password: str = Field(..., min_length=1)
+    phone: str = Field(..., min_length=1, max_length=150)  # Accepts phone or email identifier
+    password: str = Field(..., min_length=1, max_length=100)
 
 class AdminLogin(BaseModel):
-    email: str = Field(..., min_length=3, max_length=100)
-    password: str = Field(..., min_length=1)
+    email: str = Field(..., min_length=1, max_length=150)
+    password: str = Field(..., min_length=1, max_length=100)
 
 class ForgotPasswordRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=150)

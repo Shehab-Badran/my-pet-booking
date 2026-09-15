@@ -38,7 +38,7 @@ def test_corrections():
                 pet_size="small",
                 service_id=small_dog_both.id,
                 booking_date=target_date,
-                start_time=time(16, 0),
+                start_time=time(15, 0),
                 special_notes="Both shower and cut"
             )
         )
@@ -55,14 +55,14 @@ def test_corrections():
                 pet_size="large",
                 service_id=large_dog_both.id,
                 booking_date=target_date,
-                start_time=time(16, 0),
+                start_time=time(17, 0),
                 special_notes="Large dog both"
             )
         )
         assert booking_ld.price == 650.0, f"Expected 650 EGP, got {booking_ld.price}"
         print(f"3. Large Dog Shower + Cut OK: {booking_ld.booking_id} -> {booking_ld.price} EGP")
 
-        # 4. Test Cat Shower + Cut (490 EGP) on another slot
+        # 4. Test Cat Shower + Cut (490 EGP) on another non-overlapping slot (20:00)
         cat_both = [s for s in services if s.name == "Shower + Cut" and s.pet_type == "cat"][0]
         booking_cat = crud.create_booking(
             db, user,
@@ -72,26 +72,26 @@ def test_corrections():
                 pet_size=None,
                 service_id=cat_both.id,
                 booking_date=target_date,
-                start_time=time(18, 0),
+                start_time=time(20, 0),
                 special_notes="Cat both"
             )
         )
         assert booking_cat.price == 490.0, f"Expected 490 EGP, got {booking_cat.price}"
         print(f"4. Cat Shower + Cut OK: {booking_cat.booking_id} -> {booking_cat.price} EGP")
 
-        # 5. Test Admin Block Slot
+        # 5. Test Admin Block Slot at 22:00
         block = crud.block_admin_slot(
             db,
             admin_user=admin,
             booking_date=target_date,
-            start_time=time(18, 0),
+            start_time=time(22, 0),
             duration=60,
             reason="Sanitization maintenance"
         )
         assert block.status == "blocked"
         print(f"5. Admin Block Slot OK: {block.booking_id} at {block.start_time}")
 
-        # 6. Verify that slot at 18:00 is now at max capacity (1 cat booking + 1 admin block = 2)
+        # 6. Verify that slot at 22:00 is now at max capacity (1 admin block = capacity 1)
         try:
             crud.create_booking(
                 db, user,
@@ -101,18 +101,22 @@ def test_corrections():
                     pet_size=None,
                     service_id=cat_both.id,
                     booking_date=target_date,
-                    start_time=time(18, 0)
+                    start_time=time(22, 0)
                 )
             )
+            assert False, "Expected ValueError for booked/blocked slot"
         except ValueError as e:
             print(f"6. Capacity constraint verified: {e}")
 
         # 6b. Test Streamlined Fast Customer Booking (Only Date & Time, default pet/service)
+        # Note: 23:00 has 60m remaining before 24:00 closing time
+        streamlined_service = [s for s in services if s.duration <= 60][0]
         streamlined_booking = crud.create_booking(
             db, user,
             schemas.BookingCreate(
+                service_id=streamlined_service.id,
                 booking_date=target_date,
-                start_time=time(20, 0),
+                start_time=time(23, 0),
                 special_notes="Fast single-page booking test"
             )
         )
@@ -126,7 +130,8 @@ def test_corrections():
         client = TestClient(app)
 
         # Admin login via /auth/admin-login
-        admin_resp = client.post("/auth/admin-login", json={"email": "admin@mypetcenter.com", "password": "admin123"})
+        admin_pass = os.getenv("ADMIN_PASSWORD", "MyPetCenter#2026!Admin")
+        admin_resp = client.post("/auth/admin-login", json={"email": "admin@mypetcenter.com", "password": admin_pass})
         assert admin_resp.status_code == 200, f"Admin login failed: {admin_resp.text}"
         admin_token = admin_resp.json()["access_token"]
         print("7. Admin login with email OK (token received).")

@@ -27,13 +27,12 @@ def override_get_db():
     finally:
         db.close()
 
-app.dependency_overrides[get_db] = override_get_db
-
 class TestBookingAndCapacityRules(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         Base.metadata.drop_all(bind=test_engine)
         Base.metadata.create_all(bind=test_engine)
+        app.dependency_overrides[get_db] = override_get_db
         cls.client = TestClient(app)
 
         db = TestingSessionLocal()
@@ -99,6 +98,13 @@ class TestBookingAndCapacityRules(unittest.TestCase):
         cls.cust2_token = auth.create_access_token(data={"sub": str(cls.cust2.id), "role": "customer"})
         cls.cust3_token = auth.create_access_token(data={"sub": str(cls.cust3.id), "role": "customer"})
         db.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        app.dependency_overrides.pop(get_db, None)
+
+    def setUp(self):
+        app.dependency_overrides[get_db] = override_get_db
 
     def test_01_whole_hour_slots_only(self):
         """Test availability endpoint returns only whole-hour slots (15:00 to 23:00) with zero :30 slots."""

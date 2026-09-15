@@ -17,6 +17,9 @@ from backend.app.auth import (
     require_admin
 )
 
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, FileResponse
+
 # Auto-create and migrate database tables on startup
 Base.metadata.create_all(bind=engine)
 with engine.connect() as conn:
@@ -31,6 +34,47 @@ app = FastAPI(
     description="Production-ready grooming booking API for My Pet Center.",
     version="2.1.0"
 )
+
+# Custom Exception Handler to eliminate technical schema messages (e.g. "String should have at least 3 characters")
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc: RequestValidationError):
+    errors = exc.errors()
+    user_friendly_messages = []
+
+    for err in errors:
+        loc = err.get("loc", [])
+        field = loc[-1] if loc else "field"
+        err_type = err.get("type", "")
+
+        if field == "name":
+            user_friendly_messages.append("Please enter your full name.")
+        elif field == "email":
+            user_friendly_messages.append("Please enter a valid email address.")
+        elif field == "phone":
+            user_friendly_messages.append("Please enter a valid Egyptian phone number or email address.")
+        elif field in ["password", "new_password"]:
+            user_friendly_messages.append("Password must be at least 6 characters.")
+        elif field == "token":
+            user_friendly_messages.append("Password reset token is invalid or expired.")
+        elif field == "booking_date":
+            user_friendly_messages.append("Please select a valid appointment date.")
+        elif field == "start_time":
+            user_friendly_messages.append("Please select a valid appointment time.")
+        elif "missing" in err_type:
+            user_friendly_messages.append("This field is required.")
+        else:
+            msg = err.get("msg", "Invalid input.")
+            if "string should have at least" in msg.lower():
+                user_friendly_messages.append(f"Please check your input for {field}.")
+            else:
+                user_friendly_messages.append(msg)
+
+    # Deduplicate messages while preserving order
+    clean_detail = " ".join(dict.fromkeys(user_friendly_messages)) or "Invalid input provided. Please check your details."
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": clean_detail}
+    )
 
 # Security Response Headers Middleware
 @app.middleware("http")
@@ -92,7 +136,8 @@ def register(user_in: schemas.UserRegister, db: Session = Depends(get_db)):
 @app.post("/auth/login", response_model=schemas.TokenResponse)
 def login(login_in: schemas.UserLogin, db: Session = Depends(get_db)):
     """Authenticate customer (or admin) with phone/email identifier and password."""
-    user = crud.get_user_by_identifier(db, login_in.phone)
+    identifier = login_in.phone.strip()
+    user = crud.get_user_by_identifier(db, identifier)
     if not user or not verify_password(login_in.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
