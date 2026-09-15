@@ -51,9 +51,9 @@ def test_everything():
         print(f"   [OK] Empty day ({test_empty_date}): All {len(slots_empty)} slots are AVAILABLE (3:00 PM - 12:00 AM).")
 
         # ----------------------------------------------------
-        # TEST 3: CAPACITY CHECK WITH 1 BOOKING VS 2 BOOKINGS
+        # TEST 3: CAPACITY CHECK WITH DEFAULT CAPACITY = 1
         # ----------------------------------------------------
-        print("\n3. Testing Capacity Rules (1 booking vs 2 overlapping bookings)...")
+        print("\n3. Testing Capacity Rules (Default 1 booking per slot)...")
         test_cap_date = date.today() + timedelta(days=4)
         db.query(models.Booking).filter(models.Booking.booking_date == test_cap_date).delete()
         db.commit()
@@ -70,43 +70,29 @@ def test_everything():
                 special_notes="Test booking 1"
             )
         )
-        # Query availability - slot 16:00 must STILL be available (capacity is 2)
+        # Query availability - slot 16:00 must now be UNAVAILABLE (capacity is 1/1)
         slots_after_1 = crud.get_available_slots(db, test_cap_date)
         slot_16_after_1 = [s for s in slots_after_1 if s.time == time(16, 0)][0]
-        assert slot_16_after_1.available == True, "Slot 16:00 should remain available with 1 booking!"
-        print(f"   [OK] After 1 booking at 16:00: Slot 16:00 remains AVAILABLE (Capacity 1/2).")
-
-        # Step 3b: Create 2nd booking at 16:00 (duration: 60m -> 16:00 to 17:00)
-        b2 = crud.create_booking(
-            db, user,
-            schemas.BookingCreate(
-                booking_date=test_cap_date,
-                start_time=time(16, 0),
-                special_notes="Test booking 2"
-            )
-        )
-        # Query availability - slot 16:00 must now be UNAVAILABLE (capacity reached 2/2)
-        slots_after_2 = crud.get_available_slots(db, test_cap_date)
-        slot_16_after_2 = [s for s in slots_after_2 if s.time == time(16, 0)][0]
-        assert slot_16_after_2.available == False, "Slot 16:00 must be UNAVAILABLE after 2 bookings!"
+        assert slot_16_after_1.available == False, "Slot 16:00 should be unavailable with 1 booking when capacity=1!"
         
-        # Slots after 17:00 should still be AVAILABLE
-        slot_17_after_2 = [s for s in slots_after_2 if s.time == time(17, 30)][0]
-        assert slot_17_after_2.available == True, "Slot 17:30 should be AVAILABLE!"
-        print(f"   [OK] After 2 bookings at 16:00: Slot 16:00 is UNAVAILABLE (Capacity 2/2), 17:30 is AVAILABLE.")
+        # Slots at 17:00 should still be AVAILABLE
+        slot_17_after_1 = [s for s in slots_after_1 if s.time == time(17, 0)][0]
+        assert slot_17_after_1.available == True, "Slot 17:00 should be AVAILABLE!"
+        print(f"   [OK] After 1 booking at 16:00: Slot 16:00 is UNAVAILABLE (Capacity 1/1), 17:00 is AVAILABLE.")
 
-        # Step 3c: Attempting 3rd booking at 16:00 must raise ValueError
+        # Step 3b: Attempting 2nd booking at 16:00 must raise ValueError under capacity=1
         try:
             crud.create_booking(
                 db, user,
                 schemas.BookingCreate(
                     booking_date=test_cap_date,
-                    start_time=time(16, 0)
+                    start_time=time(16, 0),
+                    special_notes="Test booking 2"
                 )
             )
-            assert False, "Backend failed to reject 3rd overlapping booking!"
+            assert False, "Backend failed to reject 2nd overlapping booking under capacity=1!"
         except ValueError as e:
-            print(f"   [OK] 3rd overlapping booking correctly REJECTED by backend: '{e}'")
+            print(f"   [OK] 2nd overlapping booking correctly REJECTED by backend: '{e}'")
 
         # ----------------------------------------------------
         # TEST 4: DURATION-AWARE AVAILABILITY
@@ -119,10 +105,10 @@ def test_everything():
             models.Service.pet_size == "large"
         ).first()
         slots_150m = crud.get_available_slots(db, test_empty_date, service_id=large_dog_service.id)
-        # At 150m duration, last slot before 00:00 midnight is 21:30 (21:30 + 2h30m = 00:00)
+        # At 150m duration with 60m interval, last whole-hour slot before 00:00 midnight is 21:00 (21:00 + 2h30m = 23:30 <= 00:00)
         last_slot = slots_150m[-1]
-        assert last_slot.time == time(21, 30), f"Expected last slot at 21:30 for 150m service, got {last_slot.time}"
-        print(f"   [OK] 150m duration correctly calculates last available slot at {last_slot.time}.")
+        assert last_slot.time == time(21, 0), f"Expected last whole-hour slot at 21:00 for 150m service, got {last_slot.time}"
+        print(f"   [OK] 150m duration correctly calculates last available whole-hour slot at {last_slot.time}.")
 
         # ----------------------------------------------------
         # TEST 5: ADMIN AUTHENTICATION & ROLE AUTHORIZATION
@@ -130,7 +116,8 @@ def test_everything():
         print("\n5. Testing Admin vs Customer Authentication & Role Protection...")
         
         # 5a. Admin login via /auth/admin-login
-        admin_res = client.post("/auth/admin-login", json={"email": "admin@mypetcenter.com", "password": "admin123"})
+        from backend.app.config import settings
+        admin_res = client.post("/auth/admin-login", json={"email": "admin@mypetcenter.com", "password": settings.ADMIN_PASSWORD})
         assert admin_res.status_code == 200, f"Admin login failed: {admin_res.text}"
         admin_data = admin_res.json()
         assert admin_data["user"]["role"] == "admin", f"Expected admin role, got {admin_data['user']['role']}"

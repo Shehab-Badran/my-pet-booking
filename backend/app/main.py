@@ -6,8 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from backend.app.database import engine, Base, get_db
-from backend.app import crud, schemas, models
+from backend.app import crud, schemas, models, email as email_service
 from backend.app.auth import (
     hash_password,
     verify_password,
@@ -16,9 +17,7 @@ from backend.app.auth import (
     require_admin
 )
 
-from sqlalchemy import text
-
-# Auto-create database tables on startup
+# Auto-create and migrate database tables on startup
 Base.metadata.create_all(bind=engine)
 with engine.connect() as conn:
     try:
@@ -30,7 +29,7 @@ with engine.connect() as conn:
 app = FastAPI(
     title="My Pet Center Grooming Booking API",
     description="Production-ready grooming booking API for My Pet Center.",
-    version="2.0.0"
+    version="2.1.0"
 )
 
 # Security Response Headers Middleware
@@ -56,46 +55,55 @@ app.add_middleware(
 
 @app.post("/auth/register", response_model=schemas.TokenResponse, status_code=status.HTTP_201_CREATED)
 def register(user_in: schemas.UserRegister, db: Session = Depends(get_db)):
-    """Register a new customer account."""
-    existing_user = crud.get_user_by_phone(db, user_in.phone)
-    if existing_user:
+    """Register a new customer account with validated Full Name, Email, Phone, and Password."""
+    # Check phone uniqueness
+    existing_phone = crud.get_user_by_phone(db, user_in.phone)
+    if existing_phone:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="An account with this phone number already exists. Please log in."
         )
-    
+
+    # Check email uniqueness
+    existing_email = crud.get_user_by_email(db, user_in.email)
+    if existing_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An account with this email address already exists. Please log in."
+        )
+
     hashed_pwd = hash_password(user_in.password)
     user = crud.create_user(
         db,
         name=user_in.name,
+        email=user_in.email,
         phone=user_in.phone,
         password_hash=hashed_pwd,
-        role="customer",
-        email=user_in.email
+        role="customer"
     )
-    
+
     access_token = create_access_token(data={"sub": str(user.id), "role": user.role})
     return schemas.TokenResponse(
         access_token=access_token,
         token_type="bearer",
-        user=schemas.UserResponse.from_orm(user)
+        user=schemas.UserResponse.model_validate(user)
     )
 
 @app.post("/auth/login", response_model=schemas.TokenResponse)
 def login(login_in: schemas.UserLogin, db: Session = Depends(get_db)):
-    """Authenticate customer (or admin) with phone/email and return JWT token."""
+    """Authenticate customer (or admin) with phone/email identifier and password."""
     user = crud.get_user_by_identifier(db, login_in.phone)
     if not user or not verify_password(login_in.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid phone/email or password. Please try again."
         )
-    
+
     access_token = create_access_token(data={"sub": str(user.id), "role": user.role})
     return schemas.TokenResponse(
         access_token=access_token,
         token_type="bearer",
-        user=schemas.UserResponse.from_orm(user)
+        user=schemas.UserResponse.model_validate(user)
     )
 
 @app.post("/auth/admin-login", response_model=schemas.TokenResponse)
@@ -107,19 +115,80 @@ def admin_login(login_in: schemas.AdminLogin, db: Session = Depends(get_db)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials. Please try again."
         )
-    
+
     if user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: Administrator permissions required."
         )
-    
+
     access_token = create_access_token(data={"sub": str(user.id), "role": user.role})
     return schemas.TokenResponse(
         access_token=access_token,
         token_type="bearer",
-        user=schemas.UserResponse.from_orm(user)
+        user=schemas.UserResponse.model_validate(user)
     )
+
+@app.post("/auth/forgot-password", response_model=schemas.MessageResponse)
+def forgot_password(req: schemas.ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Initiate secure password reset.
+    Generates a 15-minute one-time reset token and sends an email if the account exists.
+    Returns an anti-enumeration generic response.
+    """
+    user = crud.get_user_by_email(db, req.email)
+    if user:
+        raw_token = crud.create_password_reset_token(db, user, expires_minutes=15)
+        # Dispatch email (silently logs if SMTP not configured)
+        email_service.send_password_reset_email(
+            to_email=user.email,
+            recipient_name=user.name,
+            reset_token=raw_token
+        )
+
+    # Always return anti-enumeration generic message
+    return schemas.MessageResponse(
+        message="If this email is registered in our system, you will receive password reset instructions shortly."
+    )
+
+@app.get("/auth/verify-reset-token", response_model=schemas.VerifyTokenResponse)
+def verify_reset_token(token: str = Query(..., min_length=10), db: Session = Depends(get_db)):
+    """Verify if a password reset token is active, unused, and unexpired."""
+    user = crud.verify_password_reset_token(db, token)
+    if not user:
+        return schemas.VerifyTokenResponse(
+            valid=False,
+            email=None,
+            message="This password reset link is invalid or has expired. Please request a new one."
+        )
+
+    # Mask email for privacy (e.g. a***d@example.com)
+    if user.email and "@" in user.email:
+        local, domain = user.email.split("@", 1)
+        if len(local) > 2:
+            masked_local = local[0] + "***" + local[-1]
+        else:
+            masked_local = local[0] + "***"
+        masked_email = f"{masked_local}@{domain}"
+    else:
+        masked_email = None
+
+    return schemas.VerifyTokenResponse(
+        valid=True,
+        email=masked_email,
+        message="Token is valid."
+    )
+
+@app.post("/auth/reset-password", response_model=schemas.MessageResponse)
+def reset_password(req: schemas.ResetPasswordRequest, db: Session = Depends(get_db)):
+    """Complete secure password reset with a valid token."""
+    try:
+        crud.reset_password_with_token(db, req.token, req.new_password)
+        return schemas.MessageResponse(
+            message="Your password has been successfully reset. You can now log in with your new password."
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 @app.get("/auth/me", response_model=schemas.UserResponse)
 def get_current_user_profile(current_user: models.User = Depends(get_current_user)):
@@ -127,11 +196,11 @@ def get_current_user_profile(current_user: models.User = Depends(get_current_use
     return current_user
 
 
-# --- PUBLIC ENDPOINTS ---
+# --- PUBLIC BOOKING ENDPOINTS ---
 
 @app.get("/services", response_model=List[schemas.ServiceResponse])
 def read_services(db: Session = Depends(get_db)):
-    """Fetch all active grooming services and 50% discount promotional pricing."""
+    """Fetch active grooming services."""
     return crud.get_services(db, active_only=True)
 
 @app.get("/availability", response_model=List[schemas.TimeSlot])
@@ -140,7 +209,7 @@ def get_availability(
     service_id: Optional[int] = Query(None, description="The service ID to query (optional)"),
     db: Session = Depends(get_db)
 ):
-    """Get live 30-minute slot availability for a date within 3:00 PM – 12:00 AM (max 2 simultaneous appointments)."""
+    """Get live whole-hour slot availability for a date within operating hours (dynamic internal capacity)."""
     return crud.get_available_slots(db, booking_date, service_id)
 
 @app.get("/bookings/{booking_id}", response_model=schemas.BookingResponse)
@@ -185,7 +254,7 @@ def get_dashboard_stats(
     admin_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """Get dashboard stats including counts and capacity percentage."""
+    """Get dashboard stats including counts and dynamic capacity percentage."""
     return crud.get_dashboard_stats(db)
 
 @app.get("/admin/bookings", response_model=List[schemas.BookingResponse])
@@ -301,20 +370,24 @@ def update_admin_setting(
     admin_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """Update a business setting configuration."""
+    """Update a business setting configuration with strict validation."""
+    val = setting_update.value.strip()
     if key in ["opening_time", "closing_time"]:
         try:
-            datetime.strptime(setting_update.value, "%H:%M:%S")
+            datetime.strptime(val, "%H:%M:%S")
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid time format. Use HH:MM:SS (e.g. 15:00:00).")
     elif key == "max_simultaneous_bookings":
-        if not setting_update.value.isdigit() or int(setting_update.value) <= 0:
-            raise HTTPException(status_code=400, detail="Capacity must be a positive integer.")
+        if not val.isdigit() or int(val) <= 0:
+            raise HTTPException(status_code=400, detail="Capacity must be a positive integer (e.g. 1, 2, 3).")
     elif key == "max_booking_days_ahead":
-        if not setting_update.value.isdigit() or int(setting_update.value) <= 0:
-            raise HTTPException(status_code=400, detail="Booking window days must be a positive integer.")
+        if not val.isdigit() or int(val) <= 0:
+            raise HTTPException(status_code=400, detail="Booking window days must be a positive integer (e.g. 7).")
+    elif key == "slot_interval_minutes":
+        if not val.isdigit() or int(val) <= 0:
+            raise HTTPException(status_code=400, detail="Slot interval must be a positive integer in minutes (e.g. 60).")
 
-    db_setting = crud.update_setting(db, key, setting_update.value)
+    db_setting = crud.update_setting(db, key, val)
     if not db_setting:
         raise HTTPException(status_code=404, detail="Setting configuration key not found.")
     return db_setting
@@ -346,4 +419,3 @@ if os.path.exists(DIST_DIR):
         if os.path.exists(index_file):
             return FileResponse(index_file)
         return {"message": "My Pet Center API is running."}
-

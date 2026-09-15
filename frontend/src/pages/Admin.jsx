@@ -611,7 +611,7 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Today's Capacity</span>
                 <div className="flex items-baseline justify-between">
                   <span className="text-3xl font-black text-plum-deep font-display">{stats?.capacity_percentage ?? 0}%</span>
-                  <span className="text-xs font-bold text-slate-600 bg-plum-bg px-2 py-0.5 rounded-md">Max 2 / Slot</span>
+                  <span className="text-xs font-bold text-slate-600 bg-plum-bg px-2 py-0.5 rounded-md">Max {editingSettings.max_simultaneous_bookings || '1'} / Slot</span>
                 </div>
               </div>
 
@@ -1009,7 +1009,8 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                 <div className="flex gap-2">
                   <input
                     type="number"
-                    value={editingSettings.max_simultaneous_bookings || '2'}
+                    min="1"
+                    value={editingSettings.max_simultaneous_bookings || '1'}
                     onChange={(e) => setEditingSettings({ ...editingSettings, max_simultaneous_bookings: e.target.value })}
                     className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-mono font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"
                   />
@@ -1020,7 +1021,29 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                     Save
                   </button>
                 </div>
-                <span className="text-[10px] text-slate-500">Default: 2 simultaneous appointments. (Never shown to customers).</span>
+                <span className="text-[10px] text-slate-500">Default: 1 simultaneous appointment. (Never shown to customers).</span>
+              </div>
+
+              {/* Slot Interval (Minutes) */}
+              <div className="p-5 bg-plum-bg/40 rounded-2xl border border-plum-soft space-y-3">
+                <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Booking Slot Interval (Minutes)</h4>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    min="15"
+                    step="15"
+                    value={editingSettings.slot_interval_minutes || '60'}
+                    onChange={(e) => setEditingSettings({ ...editingSettings, slot_interval_minutes: e.target.value })}
+                    className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-mono font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"
+                  />
+                  <button
+                    onClick={() => handleSaveSetting('slot_interval_minutes', editingSettings.slot_interval_minutes)}
+                    className="bg-plum-deep hover:bg-plum-dark text-white font-bold text-xs px-4 py-2 rounded-xl cursor-pointer"
+                  >
+                    Save
+                  </button>
+                </div>
+                <span className="text-[10px] text-slate-500">Default: 60 minutes. Whole-hour slots only (3 PM, 4 PM, etc.).</span>
               </div>
 
               {/* Booking Window */}
@@ -1029,6 +1052,7 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                 <div className="flex gap-2">
                   <input
                     type="number"
+                    min="1"
                     value={editingSettings.max_booking_days_ahead || '7'}
                     onChange={(e) => setEditingSettings({ ...editingSettings, max_booking_days_ahead: e.target.value })}
                     className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-mono font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"

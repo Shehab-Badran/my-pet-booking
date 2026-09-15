@@ -1,3 +1,5 @@
+import secrets
+import hashlib
 import threading
 from datetime import date, time, datetime, timedelta
 from typing import List, Optional
@@ -5,6 +7,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_
 from backend.app import models, schemas
+from backend.app.auth import hash_password
 
 # Global lock for SQLite local synchronization
 sqlite_booking_lock = threading.Lock()
@@ -104,6 +107,8 @@ def get_user_by_phone(db: Session, phone: str) -> Optional[models.User]:
     ).first()
 
 def get_user_by_email(db: Session, email: str) -> Optional[models.User]:
+    if not email:
+        return None
     clean_email = email.strip().lower()
     return db.query(models.User).filter(models.User.email == clean_email).first()
 
@@ -124,21 +129,111 @@ def get_user_by_id(db: Session, user_id: int) -> Optional[models.User]:
 def create_user(
     db: Session,
     name: str,
+    email: str,
     phone: str,
     password_hash: str,
-    role: str = "customer",
-    email: Optional[str] = None
+    role: str = "customer"
 ) -> models.User:
     clean_phone = normalize_phone_number(phone) or phone.strip()
-    clean_email = email.strip().lower() if email and email.strip() else None
+    clean_email = email.strip().lower()
     user = models.User(
         name=name.strip(),
-        phone=clean_phone,
         email=clean_email,
+        phone=clean_phone,
         password_hash=password_hash,
         role=role
     )
     db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+# --- Password Reset Token Management ---
+
+def _hash_token(raw_token: str) -> str:
+    """Compute SHA-256 hash of token to prevent token exposure in database breaches."""
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+def create_password_reset_token(db: Session, user: models.User, expires_minutes: int = 15) -> str:
+    """
+    Invalidates any previous active tokens for this user and generates
+    a cryptographically secure 15-minute one-time reset token.
+    """
+    # Invalidate all prior unused tokens for this user
+    db.query(models.PasswordResetToken).filter(
+        models.PasswordResetToken.user_id == user.id,
+        models.PasswordResetToken.used == False
+    ).update({"used": True})
+    db.commit()
+
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = _hash_token(raw_token)
+    expires_at = datetime.utcnow() + timedelta(minutes=expires_minutes)
+
+    db_token = models.PasswordResetToken(
+        user_id=user.id,
+        token_hash=token_hash,
+        expires_at=expires_at,
+        used=False
+    )
+    db.add(db_token)
+    db.commit()
+    db.refresh(db_token)
+    return raw_token
+
+def verify_password_reset_token(db: Session, raw_token: str) -> Optional[models.User]:
+    """
+    Verify if a raw token is valid, unused, and unexpired.
+    Returns the associated User if valid, None otherwise.
+    """
+    if not raw_token or len(raw_token) < 10:
+        return None
+    token_hash = _hash_token(raw_token)
+    now = datetime.utcnow()
+
+    token_record = db.query(models.PasswordResetToken).filter(
+        models.PasswordResetToken.token_hash == token_hash,
+        models.PasswordResetToken.used == False,
+        models.PasswordResetToken.expires_at > now
+    ).first()
+
+    if not token_record:
+        return None
+    return token_record.user
+
+def reset_password_with_token(db: Session, raw_token: str, new_password: str) -> models.User:
+    """
+    Resets the user's password, immediately marks the token as used,
+    and invalidates all other reset tokens.
+    """
+    if not raw_token or len(raw_token) < 10:
+        raise ValueError("Invalid or expired password reset token.")
+
+    token_hash = _hash_token(raw_token)
+    now = datetime.utcnow()
+
+    token_record = db.query(models.PasswordResetToken).filter(
+        models.PasswordResetToken.token_hash == token_hash,
+        models.PasswordResetToken.used == False,
+        models.PasswordResetToken.expires_at > now
+    ).first()
+
+    if not token_record:
+        raise ValueError("This password reset link is invalid or has expired. Please request a new one.")
+
+    user = token_record.user
+    if not user:
+        raise ValueError("Associated user account not found.")
+
+    # Securely hash and update password
+    user.password_hash = hash_password(new_password)
+    token_record.used = True
+
+    # Invalidate all remaining tokens for this user
+    db.query(models.PasswordResetToken).filter(
+        models.PasswordResetToken.user_id == user.id
+    ).update({"used": True})
+
     db.commit()
     db.refresh(user)
     return user
@@ -234,7 +329,7 @@ def check_overlap_capacity(
             if b_s <= t1 and t2 <= b_e:
                 count += 1
                 
-        # If count >= max_capacity (2), slot is unavailable
+        # If count >= max_capacity (default 1), slot is unavailable
         if count >= max_capacity:
             return False
 
@@ -251,11 +346,12 @@ def get_available_slots(db: Session, booking_date: date, service_id: Optional[in
         if first_service:
             duration = first_service.duration
 
-    # Get business settings
+    # Get dynamic business settings
     opening_str = get_setting_value(db, "opening_time", "15:00:00")
     closing_str = get_setting_value(db, "closing_time", "00:00:00")
-    max_cap = int(get_setting_value(db, "max_simultaneous_bookings", "2"))
+    max_cap = int(get_setting_value(db, "max_simultaneous_bookings", "1"))
     max_days = int(get_setting_value(db, "max_booking_days_ahead", "7"))
+    slot_interval = int(get_setting_value(db, "slot_interval_minutes", "60"))
 
     # Convert settings strings to time objects
     opening_time = datetime.strptime(opening_str, "%H:%M:%S").time()
@@ -277,7 +373,7 @@ def get_available_slots(db: Session, booking_date: date, service_id: Optional[in
     current_time_min = now.hour * 60 + now.minute
 
     slots = []
-    # 30-minute intervals
+    # Whole-hour intervals (slot_interval = 60 mins default)
     current_min = op_min
     while current_min <= cl_min - duration:
         slot_hour = (current_min // 60) % 24
@@ -297,11 +393,11 @@ def get_available_slots(db: Session, booking_date: date, service_id: Optional[in
         elif booking_date == current_date and current_min <= current_time_min:
             available = False
         else:
-            # 3. Check overlap capacity against actual reservations (max 2 simultaneous pets)
+            # 3. Check overlap capacity against actual reservations (admin configurable capacity, default 1)
             available = check_overlap_capacity(db, booking_date, slot_time, end_time, max_cap)
 
         slots.append(schemas.TimeSlot(time=slot_time, available=available))
-        current_min += 30
+        current_min += slot_interval
 
     return slots
 
@@ -318,26 +414,31 @@ def create_booking(
         sqlite_booking_lock.acquire()
 
     try:
-        # Load business settings
+        # Load dynamic business settings
         opening_str = get_setting_value(db, "opening_time", "15:00:00")
         closing_str = get_setting_value(db, "closing_time", "00:00:00")
-        max_cap = int(get_setting_value(db, "max_simultaneous_bookings", "2"))
+        max_cap = int(get_setting_value(db, "max_simultaneous_bookings", "1"))
         max_days = int(get_setting_value(db, "max_booking_days_ahead", "7"))
+        slot_interval = int(get_setting_value(db, "slot_interval_minutes", "60"))
 
         opening_time = datetime.strptime(opening_str, "%H:%M:%S").time()
         closing_time = datetime.strptime(closing_str, "%H:%M:%S").time()
 
         if not is_sqlite:
-            # Row lock for PostgreSQL
+            # Row lock for PostgreSQL to prevent race conditions
             db.query(models.Setting).filter(models.Setting.key == "max_simultaneous_bookings").with_for_update().first()
 
-        # 1. Validate date range
+        # 1. Strict time rules: reject any :30 booking or non-whole-hour start times
+        if booking_in.start_time.minute % slot_interval != 0:
+            raise ValueError("Appointments must be booked on whole hours (e.g. 3:00 PM, 4:00 PM). Half-hour (:30) slots are not permitted.")
+
+        # 2. Validate date range
         today = date.today()
         max_date = today + timedelta(days=max_days - 1)
         if booking_in.booking_date < today or booking_in.booking_date > max_date:
             raise ValueError(f"Bookings are available up to {max_days} days in advance.")
 
-        # 2. Validate service exists or use default
+        # 3. Validate service exists or use default
         if booking_in.service_id:
             service = get_service_by_id(db, booking_in.service_id)
         else:
@@ -346,7 +447,7 @@ def create_booking(
         if not service or not service.active:
             raise ValueError("Selected service is invalid or inactive.")
 
-        # 3. Calculate start/end minutes and check working hours
+        # 4. Calculate start/end minutes and check operating hours
         s_min = booking_in.start_time.hour * 60 + booking_in.start_time.minute
         e_min = s_min + service.duration
         
@@ -356,14 +457,14 @@ def create_booking(
             cl_min += 24 * 60
 
         if s_min < op_min or e_min > cl_min:
-            raise ValueError(f"Grooming appointments are available from {opening_str[:5]} to {closing_str[:5]}.")
+            raise ValueError(f"Grooming appointments are available from {opening_str[:5]} to {closing_str[:5]}. Appointments cannot extend past closing.")
 
-        # 4. Check for past slots today
+        # 5. Check for past slots today
         now = datetime.now()
         if booking_in.booking_date == now.date() and s_min <= (now.hour * 60 + now.minute):
             raise ValueError("Cannot book a time slot in the past.")
 
-        # 5. Validate Pet Info & Pricing Mapping with Graceful Fallbacks
+        # 6. Pet Info & Pricing Mapping
         pet_breed = None
         pet_size = None
         pet_type = "dog"
@@ -373,7 +474,6 @@ def create_booking(
             pet_breed = booking_in.pet_breed.strip() if (booking_in.pet_breed and booking_in.pet_breed.strip()) else "Dog"
             pet_type = "dog"
 
-            # Ensure service matches pet configuration
             if service.pet_type != "dog" or service.pet_size != pet_size:
                 alternative_service = db.query(models.Service).filter(
                     models.Service.name == service.name,
@@ -405,12 +505,11 @@ def create_booking(
                 if alternative_service:
                     service = alternative_service
         else:
-            # Generic customer booking (3-step quick booking)
             pet_type = "dog"
             pet_size = "small"
             pet_breed = "Pet"
 
-        # 6. Verify availability (concurrency safe max 2 pets)
+        # 7. Verify capacity availability (dynamically respects admin configured capacity, default 1)
         end_hour = (e_min // 60) % 24
         end_minute = e_min % 60
         end_time = time(end_hour, end_minute)
@@ -425,7 +524,7 @@ def create_booking(
         if not is_available:
             raise ValueError("This time slot is no longer available. Please choose another time.")
 
-        # 7. Pet creation / association
+        # 8. Pet creation / association
         pet = get_or_create_pet(
             db,
             user_id=user.id,
@@ -434,7 +533,7 @@ def create_booking(
             size=pet_size
         )
 
-        # 8. Generate Guaranteed Unique Booking ID (e.g. MPC-000123)
+        # 9. Generate Guaranteed Unique Booking ID (e.g. MPC-000123)
         max_id = db.query(models.Booking.id).order_by(models.Booking.id.desc()).first()
         base_num = (max_id[0] if max_id else 0) + 123
         booking_id = f"MPC-{base_num:06d}"
@@ -442,7 +541,7 @@ def create_booking(
             base_num += 1
             booking_id = f"MPC-{base_num:06d}"
 
-        # 9. Create Booking with backend calculated price
+        # 10. Create Booking with backend calculated price
         db_booking = models.Booking(
             booking_id=booking_id,
             user_id=user.id,
@@ -451,7 +550,7 @@ def create_booking(
             booking_date=booking_in.booking_date,
             start_time=booking_in.start_time,
             end_time=end_time,
-            price=service.discounted_price,  # Source of truth pricing
+            price=service.discounted_price,
             special_notes=booking_in.special_notes.strip() if booking_in.special_notes else None,
             status="confirmed"
         )
@@ -529,19 +628,24 @@ def reschedule_booking(
     # Business settings
     opening_str = get_setting_value(db, "opening_time", "15:00:00")
     closing_str = get_setting_value(db, "closing_time", "00:00:00")
-    max_cap = int(get_setting_value(db, "max_simultaneous_bookings", "2"))
+    max_cap = int(get_setting_value(db, "max_simultaneous_bookings", "1"))
     max_days = int(get_setting_value(db, "max_booking_days_ahead", "7"))
+    slot_interval = int(get_setting_value(db, "slot_interval_minutes", "60"))
 
     opening_time = datetime.strptime(opening_str, "%H:%M:%S").time()
     closing_time = datetime.strptime(closing_str, "%H:%M:%S").time()
 
-    # 1. Date range
+    # 1. Enforce whole-hour start times
+    if new_start_time.minute % slot_interval != 0:
+        raise ValueError("Appointments must be scheduled on whole hours (e.g. 3:00 PM, 4:00 PM). Half-hour (:30) slots are not allowed.")
+
+    # 2. Date range
     today = date.today()
     max_date = today + timedelta(days=max_days - 1)
     if new_date < today or new_date > max_date:
         raise ValueError(f"Appointments can be scheduled up to {max_days} days in advance.")
 
-    # 2. Time bounds
+    # 3. Time bounds
     s_min = new_start_time.hour * 60 + new_start_time.minute
     e_min = s_min + service.duration
     
@@ -551,13 +655,13 @@ def reschedule_booking(
         cl_min += 24 * 60
 
     if s_min < op_min or e_min > cl_min:
-        raise ValueError(f"Grooming appointments are available from {opening_str[:5]} to {closing_str[:5]}.")
+        raise ValueError(f"Grooming appointments are available from {opening_str[:5]} to {closing_str[:5]}. Appointments cannot extend past closing.")
 
     end_hour = (e_min // 60) % 24
     end_minute = e_min % 60
     new_end_time = time(end_hour, end_minute)
 
-    # 3. Check capacity ignoring current booking ID
+    # 4. Check capacity ignoring current booking ID
     is_available = check_overlap_capacity(
         db,
         new_date,
@@ -605,7 +709,7 @@ def get_dashboard_stats(db: Session) -> schemas.DashboardStats:
     # 4. Today's Capacity Percentage
     opening_str = get_setting_value(db, "opening_time", "15:00:00")
     closing_str = get_setting_value(db, "closing_time", "00:00:00")
-    max_cap = int(get_setting_value(db, "max_simultaneous_bookings", "2"))
+    max_cap = int(get_setting_value(db, "max_simultaneous_bookings", "1"))
 
     opening_time = datetime.strptime(opening_str, "%H:%M:%S").time()
     closing_time = datetime.strptime(closing_str, "%H:%M:%S").time()
@@ -690,4 +794,3 @@ def block_admin_slot(
     db.commit()
     db.refresh(db_booking)
     return db_booking
-

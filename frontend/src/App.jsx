@@ -6,7 +6,23 @@ import BookingConfirmation from './pages/BookingConfirmation';
 import MyBookings from './pages/MyBookings';
 import Admin from './pages/Admin';
 import Logo from './components/Logo';
-import { Calendar, Menu, X, User, LogOut, MapPin, Phone, ExternalLink, ArrowRight, Sparkles } from 'lucide-react';
+import {
+  Calendar,
+  Menu,
+  X,
+  User,
+  LogOut,
+  MapPin,
+  Phone,
+  ExternalLink,
+  ArrowRight,
+  Sparkles,
+  Lock,
+  Mail,
+  CheckCircle,
+  AlertCircle,
+  KeyRound
+} from 'lucide-react';
 import { API_BASE_URL } from './config';
 
 export default function App() {
@@ -22,17 +38,78 @@ export default function App() {
   const [confirmedBooking, setConfirmedBooking] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Auth States
+  // Customer Auth Modal States
   const [currentUser, setCurrentUser] = useState(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authTab, setAuthTab] = useState('login'); // 'login' | 'register'
+  const [authTab, setAuthTab] = useState('login'); // 'login' | 'register' | 'forgot_password'
   const [authName, setAuthName] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
   const [authPhone, setAuthPhone] = useState('');
   const [authPassword, setAuthPassword] = useState('');
+  const [authConfirmPassword, setAuthConfirmPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
+  const [forgotSuccess, setForgotSuccess] = useState(false);
 
-  // Check existing token on mount
+  // Dedicated Password Reset Token & Modal States
+  const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [resetToken, setResetToken] = useState('');
+  const [resetVerifying, setResetVerifying] = useState(false);
+  const [resetTokenValid, setResetTokenValid] = useState(false);
+  const [resetMaskedEmail, setResetMaskedEmail] = useState('');
+  const [resetTokenError, setResetTokenError] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [resetSubmitLoading, setResetSubmitLoading] = useState(false);
+  const [resetSubmitError, setResetSubmitError] = useState('');
+  const [resetSubmitSuccess, setResetSubmitSuccess] = useState(false);
+
+  // Check URL query / hash for reset token
+  const checkForResetToken = () => {
+    const searchParams = new URLSearchParams(window.location.search);
+    let token = searchParams.get('token');
+
+    if (!token && window.location.hash) {
+      const hashStr = window.location.hash;
+      const qIdx = hashStr.indexOf('?');
+      if (qIdx !== -1) {
+        const hashParams = new URLSearchParams(hashStr.substring(qIdx));
+        token = hashParams.get('token');
+      }
+    }
+
+    if (token) {
+      setResetToken(token);
+      setResetModalOpen(true);
+      verifyResetToken(token);
+    }
+  };
+
+  const verifyResetToken = (token) => {
+    setResetVerifying(true);
+    setResetTokenError('');
+    setResetTokenValid(false);
+
+    fetch(`${API_BASE_URL}/auth/verify-reset-token?token=${encodeURIComponent(token)}`)
+      .then(async (res) => {
+        const data = await res.json();
+        setResetVerifying(false);
+        if (data.valid) {
+          setResetTokenValid(true);
+          setResetMaskedEmail(data.email || '');
+        } else {
+          setResetTokenValid(false);
+          setResetTokenError(data.message || 'This password reset link is invalid or has expired.');
+        }
+      })
+      .catch(() => {
+        setResetVerifying(false);
+        setResetTokenValid(false);
+        setResetTokenError('Unable to connect to server. Please try again.');
+      });
+  };
+
+  // Check existing token and reset token on mount
   useEffect(() => {
     const token = localStorage.getItem('mpc_token');
     if (token) {
@@ -61,6 +138,8 @@ export default function App() {
       }
     };
     checkAdminRoute();
+    checkForResetToken();
+
     window.addEventListener('hashchange', checkAdminRoute);
     window.addEventListener('popstate', checkAdminRoute);
     return () => {
@@ -105,17 +184,26 @@ export default function App() {
     return cleaned;
   };
 
+  // Handle Login / Sign Up Submit
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
     setAuthError('');
 
     const cleanName = authName.trim();
+    const cleanEmail = authEmail.trim().toLowerCase();
     const cleanPhone = normalizeClientPhone(authPhone) || authPhone.trim();
     const cleanPassword = authPassword.trim();
+    const cleanConfirmPassword = authConfirmPassword.trim();
 
+    // Client-side validation
     if (authTab === 'register') {
       if (!cleanName || cleanName.length < 2) {
         setAuthError('Please enter your full name (at least 2 characters).');
+        return;
+      }
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!cleanEmail || !emailRegex.test(cleanEmail)) {
+        setAuthError('Please enter a valid email address (e.g. name@example.com).');
         return;
       }
       if (!cleanPhone || cleanPhone.length < 9) {
@@ -126,7 +214,11 @@ export default function App() {
         setAuthError('Password must be at least 6 characters.');
         return;
       }
-    } else {
+      if (cleanPassword !== cleanConfirmPassword) {
+        setAuthError('Passwords do not match. Please re-enter your confirm password.');
+        return;
+      }
+    } else if (authTab === 'login') {
       if (!cleanPhone) {
         setAuthError('Please enter your phone number or email.');
         return;
@@ -135,6 +227,14 @@ export default function App() {
         setAuthError('Please enter your password.');
         return;
       }
+    } else if (authTab === 'forgot_password') {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!cleanEmail || !emailRegex.test(cleanEmail)) {
+        setAuthError('Please enter a valid email address.');
+        return;
+      }
+      handleForgotPasswordSubmit(cleanEmail);
+      return;
     }
 
     setAuthLoading(true);
@@ -143,7 +243,12 @@ export default function App() {
       const endpoint = authTab === 'register' ? '/auth/register' : '/auth/login';
       const payload =
         authTab === 'register'
-          ? { name: cleanName, phone: cleanPhone, password: cleanPassword }
+          ? {
+              name: cleanName,
+              email: cleanEmail,
+              phone: cleanPhone,
+              password: cleanPassword,
+            }
           : { phone: cleanPhone, password: cleanPassword };
 
       const res = await fetch(`${API_BASE_URL}${endpoint}`, {
@@ -168,16 +273,89 @@ export default function App() {
       setCurrentUser(data.user);
       setAuthModalOpen(false);
       setAuthName('');
+      setAuthEmail('');
       setAuthPhone('');
       setAuthPassword('');
+      setAuthConfirmPassword('');
 
-      // If the logged in user is an Admin, immediately open the Admin Dashboard!
       if (data.user?.role === 'admin') {
         handleNavigate('admin');
       }
     } catch (err) {
       setAuthLoading(false);
       setAuthError(err.message || 'An error occurred during authentication.');
+    }
+  };
+
+  // Handle Forgot Password Submit
+  const handleForgotPasswordSubmit = async (emailToSend) => {
+    setAuthLoading(true);
+    setAuthError('');
+    setForgotSuccess(false);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailToSend }),
+      });
+
+      const data = await res.json();
+      setAuthLoading(false);
+
+      if (!res.ok) {
+        throw new Error(data.detail || 'Could not process password reset request.');
+      }
+
+      setForgotSuccess(true);
+    } catch (err) {
+      setAuthLoading(false);
+      setAuthError(err.message || 'An error occurred. Please try again.');
+    }
+  };
+
+  // Handle Password Reset Form Submit
+  const handlePasswordResetSubmit = async (e) => {
+    e.preventDefault();
+    setResetSubmitError('');
+
+    if (!newPassword || newPassword.length < 6) {
+      setResetSubmitError('New password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setResetSubmitError('Passwords do not match. Please verify both passwords.');
+      return;
+    }
+
+    setResetSubmitLoading(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: resetToken,
+          new_password: newPassword,
+        }),
+      });
+
+      const data = await res.json();
+      setResetSubmitLoading(false);
+
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to reset password. The link may have expired.');
+      }
+
+      setResetSubmitSuccess(true);
+      // Clean URL params
+      if (window.history.pushState) {
+        const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+        window.history.pushState({ path: cleanUrl }, '', cleanUrl);
+      }
+    } catch (err) {
+      setResetSubmitLoading(false);
+      setResetSubmitError(err.message || 'An error occurred during password reset.');
     }
   };
 
@@ -313,6 +491,8 @@ export default function App() {
                 <button
                   onClick={() => {
                     setAuthTab('login');
+                    setForgotSuccess(false);
+                    setAuthError('');
                     setAuthModalOpen(true);
                   }}
                   className="bg-plum-deep hover:bg-plum-dark text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-xs transition-colors cursor-pointer border border-plum-soft/20"
@@ -398,6 +578,9 @@ export default function App() {
               ) : (
                 <button
                   onClick={() => {
+                    setAuthTab('login');
+                    setForgotSuccess(false);
+                    setAuthError('');
                     setAuthModalOpen(true);
                     setMobileMenuOpen(false);
                   }}
@@ -437,7 +620,12 @@ export default function App() {
             setPreselectedService={setPreselectedService}
             onBookingComplete={handleBookingComplete}
             currentUser={currentUser}
-            onOpenAuth={() => setAuthModalOpen(true)}
+            onOpenAuth={() => {
+              setAuthTab('login');
+              setForgotSuccess(false);
+              setAuthError('');
+              setAuthModalOpen(true);
+            }}
           />
         )}
         {currentPage === 'confirmation' && (
@@ -447,7 +635,12 @@ export default function App() {
           <MyBookings
             currentUser={currentUser}
             onNavigate={handleNavigate}
-            onOpenAuth={() => setAuthModalOpen(true)}
+            onOpenAuth={() => {
+              setAuthTab('login');
+              setForgotSuccess(false);
+              setAuthError('');
+              setAuthModalOpen(true);
+            }}
           />
         )}
       </main>
@@ -514,12 +707,16 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Customer Auth Modal (Login / Sign Up) */}
+      {/* Customer Auth Modal (Login / Sign Up / Forgot Password) */}
       {authModalOpen && (
         <div className="fixed inset-0 bg-plum-deep/80 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-6 sm:p-8 space-y-6 shadow-2xl relative border border-plum-soft animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 sm:p-8 space-y-5 shadow-2xl relative border border-plum-soft animate-fade-in max-h-[92vh] overflow-y-auto">
             <button
-              onClick={() => setAuthModalOpen(false)}
+              onClick={() => {
+                setAuthModalOpen(false);
+                setForgotSuccess(false);
+                setAuthError('');
+              }}
               className="absolute right-5 top-5 text-slate-400 hover:text-plum-deep cursor-pointer"
               aria-label="Close modal"
             >
@@ -532,96 +729,352 @@ export default function App() {
                 <Logo size="md" />
               </div>
               <h3 className="text-2xl font-black text-plum-deep font-display">
-                {authTab === 'login' ? 'Welcome Back' : 'Create Account'}
+                {authTab === 'login'
+                  ? 'Welcome Back'
+                  : authTab === 'register'
+                  ? 'Create Account'
+                  : 'Reset Password'}
               </h3>
               <p className="text-xs text-slate-600">
                 {authTab === 'login'
-                  ? 'Sign in to view and manage your grooming appointments'
-                  : 'Quick signup in seconds'}
+                  ? 'Sign in to manage your grooming appointments'
+                  : authTab === 'register'
+                  ? 'Quick registration with email & phone'
+                  : 'Enter your registered email to receive reset instructions'}
               </p>
             </div>
 
-            {/* Tabs */}
-            <div className="flex bg-plum-bg p-1 rounded-xl border border-plum-soft/40">
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthTab('login');
-                  setAuthError('');
-                }}
-                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                  authTab === 'login' ? 'bg-white text-plum-deep shadow-xs' : 'text-slate-600'
-                }`}
-              >
-                Log In
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthTab('register');
-                  setAuthError('');
-                }}
-                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                  authTab === 'register' ? 'bg-white text-plum-deep shadow-xs' : 'text-slate-600'
-                }`}
-              >
-                Sign Up
-              </button>
-            </div>
-
-            {authError && (
-              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-900 rounded-xl text-xs font-semibold">
-                ⚠️ {authError}
+            {/* Tabs for Login / Sign Up (Hidden in forgot_password mode) */}
+            {authTab !== 'forgot_password' && (
+              <div className="flex bg-plum-bg p-1 rounded-xl border border-plum-soft/40">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthTab('login');
+                    setAuthError('');
+                  }}
+                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    authTab === 'login' ? 'bg-white text-plum-deep shadow-xs' : 'text-slate-600'
+                  }`}
+                >
+                  Log In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthTab('register');
+                    setAuthError('');
+                  }}
+                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    authTab === 'register' ? 'bg-white text-plum-deep shadow-xs' : 'text-slate-600'
+                  }`}
+                >
+                  Sign Up
+                </button>
               </div>
             )}
 
-            <form onSubmit={handleAuthSubmit} className="space-y-4">
-              {authTab === 'register' && (
+            {authError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-900 rounded-xl text-xs font-semibold flex items-start gap-1.5">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>{authError}</span>
+              </div>
+            )}
+
+            {/* Forgot Password Success Notice */}
+            {forgotSuccess ? (
+              <div className="space-y-4 text-center py-2 animate-fade-in">
+                <div className="w-12 h-12 bg-teal-veryLight text-teal-dark rounded-full flex items-center justify-center mx-auto border border-teal-light">
+                  <Mail className="w-6 h-6" />
+                </div>
+                <div className="space-y-1.5">
+                  <h4 className="text-sm font-extrabold text-plum-deep font-display">Instructions Sent</h4>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    If this email address is registered in our system, you will receive password reset instructions shortly.
+                    Please check your inbox and spam folder.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthTab('login');
+                    setForgotSuccess(false);
+                    setAuthError('');
+                  }}
+                  className="w-full bg-plum-deep hover:bg-plum-dark text-white font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+                >
+                  Back to Log In
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleAuthSubmit} className="space-y-3.5">
+                {/* Full Name (Sign Up only) */}
+                {authTab === 'register' && (
+                  <div>
+                    <label className="block text-xs font-extrabold text-plum-deep uppercase tracking-wider mb-1">
+                      Full Name <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={authName}
+                      onChange={(e) => setAuthName(e.target.value)}
+                      placeholder="Ahmed Mohamed"
+                      className="w-full bg-white border border-plum-soft rounded-xl px-3.5 py-2.5 text-xs font-semibold text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-primary"
+                      required
+                    />
+                  </div>
+                )}
+
+                {/* Email Address (Sign Up & Forgot Password) */}
+                {(authTab === 'register' || authTab === 'forgot_password') && (
+                  <div>
+                    <label className="block text-xs font-extrabold text-plum-deep uppercase tracking-wider mb-1">
+                      Email Address <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                      placeholder="customer@example.com"
+                      className="w-full bg-white border border-plum-soft rounded-xl px-3.5 py-2.5 text-xs font-semibold text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-primary"
+                      required
+                    />
+                  </div>
+                )}
+
+                {/* Phone Number (Sign Up & Login) */}
+                {authTab !== 'forgot_password' && (
+                  <div>
+                    <label className="block text-xs font-extrabold text-plum-deep uppercase tracking-wider mb-1">
+                      {authTab === 'register' ? (
+                        <>Phone Number <span className="text-rose-500">*</span></>
+                      ) : (
+                        'Phone Number or Email'
+                      )}
+                    </label>
+                    <input
+                      type="text"
+                      value={authPhone}
+                      onChange={(e) => setAuthPhone(e.target.value)}
+                      placeholder={authTab === 'register' ? '012XXXXXXXX' : '012XXXXXXXX or email'}
+                      className="w-full bg-white border border-plum-soft rounded-xl px-3.5 py-2.5 text-xs font-semibold font-mono text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-primary"
+                      required
+                    />
+                  </div>
+                )}
+
+                {/* Password (Sign Up & Login) */}
+                {authTab !== 'forgot_password' && (
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs font-extrabold text-plum-deep uppercase tracking-wider">
+                        Password <span className="text-rose-500">*</span>
+                      </label>
+                      {authTab === 'login' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuthTab('forgot_password');
+                            setAuthError('');
+                            setForgotSuccess(false);
+                          }}
+                          className="text-[11px] font-bold text-teal-dark hover:underline cursor-pointer"
+                        >
+                          Forgot Password?
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="password"
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-white border border-plum-soft rounded-xl px-3.5 py-2.5 text-xs font-semibold text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-primary"
+                      required
+                    />
+                  </div>
+                )}
+
+                {/* Confirm Password (Sign Up only) */}
+                {authTab === 'register' && (
+                  <div>
+                    <label className="block text-xs font-extrabold text-plum-deep uppercase tracking-wider mb-1">
+                      Confirm Password <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="password"
+                      value={authConfirmPassword}
+                      onChange={(e) => setAuthConfirmPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-white border border-plum-soft rounded-xl px-3.5 py-2.5 text-xs font-semibold text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-primary"
+                      required
+                    />
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  className="w-full bg-gradient-to-r from-plum-primary to-plum-deep hover:from-plum-dark hover:to-plum-deep text-white font-extrabold py-3 rounded-xl text-xs transition-all shadow-md cursor-pointer disabled:opacity-50 border border-plum-soft/20 mt-2"
+                >
+                  {authLoading
+                    ? 'Processing...'
+                    : authTab === 'login'
+                    ? 'Log In'
+                    : authTab === 'register'
+                    ? 'Create Account'
+                    : 'Send Reset Instructions'}
+                </button>
+
+                {authTab === 'forgot_password' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthTab('login');
+                      setAuthError('');
+                    }}
+                    className="w-full bg-plum-bg hover:bg-plum-soft/40 text-plum-deep font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer mt-1"
+                  >
+                    Back to Log In
+                  </button>
+                )}
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Dedicated Password Reset Modal (Activated via reset link) */}
+      {resetModalOpen && (
+        <div className="fixed inset-0 bg-plum-deep/85 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 sm:p-8 space-y-5 shadow-2xl relative border border-plum-soft animate-fade-in">
+            <button
+              onClick={() => {
+                setResetModalOpen(false);
+                setResetSubmitSuccess(false);
+                setResetToken('');
+              }}
+              className="absolute right-5 top-5 text-slate-400 hover:text-plum-deep cursor-pointer"
+              aria-label="Close modal"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="text-center space-y-2">
+              <div className="w-12 h-12 bg-plum-bg text-plum-deep rounded-2xl flex items-center justify-center mx-auto border border-plum-soft">
+                <KeyRound className="w-6 h-6 text-plum-primary" />
+              </div>
+              <h3 className="text-2xl font-black text-plum-deep font-display">
+                Set New Password
+              </h3>
+              {resetMaskedEmail && (
+                <p className="text-xs text-slate-600 font-mono">
+                  Account: <span className="font-bold text-plum-deep">{resetMaskedEmail}</span>
+                </p>
+              )}
+            </div>
+
+            {resetVerifying ? (
+              <div className="py-8 text-center space-y-3">
+                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-plum-primary mx-auto"></div>
+                <p className="text-xs text-slate-500 font-semibold">Verifying secure reset link...</p>
+              </div>
+            ) : resetTokenError ? (
+              <div className="space-y-4 py-2 text-center animate-fade-in">
+                <div className="p-4 bg-rose-50 border border-rose-200 text-rose-900 rounded-2xl text-xs font-medium space-y-2 text-left">
+                  <div className="flex items-center gap-2 font-bold text-rose-800">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>Reset Link Expired or Invalid</span>
+                  </div>
+                  <p className="text-[11px] text-rose-700 leading-relaxed">
+                    {resetTokenError} Reset tokens are single-use and expire after 15 minutes for security.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetModalOpen(false);
+                    setAuthTab('forgot_password');
+                    setForgotSuccess(false);
+                    setAuthModalOpen(true);
+                  }}
+                  className="w-full bg-gradient-to-r from-plum-primary to-plum-deep hover:from-plum-dark hover:to-plum-deep text-white font-extrabold py-3 rounded-xl text-xs transition-all shadow-md cursor-pointer"
+                >
+                  Request a New Reset Link
+                </button>
+              </div>
+            ) : resetSubmitSuccess ? (
+              <div className="space-y-4 py-2 text-center animate-fade-in">
+                <div className="w-12 h-12 bg-teal-veryLight text-teal-dark rounded-full flex items-center justify-center mx-auto border border-teal-light">
+                  <CheckCircle className="w-6 h-6" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-sm font-extrabold text-plum-deep font-display">Password Reset Complete</h4>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Your password has been securely updated. You can now log in to your account with your new password.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetModalOpen(false);
+                    setResetSubmitSuccess(false);
+                    setAuthTab('login');
+                    setAuthError('');
+                    setAuthModalOpen(true);
+                  }}
+                  className="w-full bg-gradient-to-r from-plum-primary to-plum-deep hover:from-plum-dark hover:to-plum-deep text-white font-extrabold py-3 rounded-xl text-xs transition-all shadow-md cursor-pointer"
+                >
+                  Log In Now
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handlePasswordResetSubmit} className="space-y-4">
+                {resetSubmitError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-900 rounded-xl text-xs font-semibold flex items-start gap-1.5">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <span>{resetSubmitError}</span>
+                  </div>
+                )}
+
                 <div>
-                  <label className="block text-xs font-extrabold text-plum-deep uppercase tracking-wider mb-1">Full Name</label>
+                  <label className="block text-xs font-extrabold text-plum-deep uppercase tracking-wider mb-1">
+                    New Password
+                  </label>
                   <input
-                    type="text"
-                    value={authName}
-                    onChange={(e) => setAuthName(e.target.value)}
-                    placeholder="Ahmed Mohamed"
-                    className="w-full bg-white border border-plum-soft rounded-xl px-3.5 py-2.5 text-xs font-semibold text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-primary focus:border-teal-primary"
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-white border border-plum-soft rounded-xl px-3.5 py-2.5 text-xs font-semibold text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-primary"
+                    required
+                  />
+                  <span className="text-[10px] text-slate-500 block mt-1">Minimum 6 characters</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-extrabold text-plum-deep uppercase tracking-wider mb-1">
+                    Confirm New Password
+                  </label>
+                  <input
+                    type="password"
+                    value={confirmNewPassword}
+                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-white border border-plum-soft rounded-xl px-3.5 py-2.5 text-xs font-semibold text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-primary"
                     required
                   />
                 </div>
-              )}
 
-              <div>
-                <label className="block text-xs font-extrabold text-plum-deep uppercase tracking-wider mb-1">Phone Number</label>
-                <input
-                  type="tel"
-                  value={authPhone}
-                  onChange={(e) => setAuthPhone(e.target.value)}
-                  placeholder="012XXXXXXXX"
-                  className="w-full bg-white border border-plum-soft rounded-xl px-3.5 py-2.5 text-xs font-semibold font-mono text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-primary focus:border-teal-primary"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-extrabold text-plum-deep uppercase tracking-wider mb-1">Password</label>
-                <input
-                  type="password"
-                  value={authPassword}
-                  onChange={(e) => setAuthPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full bg-white border border-plum-soft rounded-xl px-3.5 py-2.5 text-xs font-semibold text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-primary focus:border-teal-primary"
-                  required
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={authLoading}
-                className="w-full bg-gradient-to-r from-plum-primary to-plum-deep hover:from-plum-dark hover:to-plum-deep text-white font-extrabold py-3 rounded-xl text-xs transition-all shadow-md cursor-pointer disabled:opacity-50 border border-plum-soft/20"
-              >
-                {authLoading ? 'Processing...' : authTab === 'login' ? 'Log In' : 'Create Account'}
-              </button>
-            </form>
+                <button
+                  type="submit"
+                  disabled={resetSubmitLoading}
+                  className="w-full bg-gradient-to-r from-plum-primary to-plum-deep hover:from-plum-dark hover:to-plum-deep text-white font-extrabold py-3 rounded-xl text-xs transition-all shadow-md cursor-pointer disabled:opacity-50 border border-plum-soft/20"
+                >
+                  {resetSubmitLoading ? 'Saving Password...' : 'Update Password'}
+                </button>
+              </form>
+            )}
           </div>
         </div>
       )}

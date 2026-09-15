@@ -14,7 +14,6 @@ def seed_db():
             conn.commit()
             print("Migrated database: added 'email' column to users table.")
         except Exception:
-            # Column already exists
             pass
 
     db = SessionLocal()
@@ -23,8 +22,9 @@ def seed_db():
         settings_to_seed = {
             "opening_time": "15:00:00",
             "closing_time": "00:00:00",
-            "max_simultaneous_bookings": "2",
-            "max_booking_days_ahead": "7"
+            "max_simultaneous_bookings": "1",
+            "max_booking_days_ahead": "7",
+            "slot_interval_minutes": "60"
         }
 
         print("Seeding internal business settings...")
@@ -78,9 +78,10 @@ def seed_db():
             db.add(customer)
             print(f"Created Customer account: Phone={customer_phone}")
         else:
-            print(f"Customer account already exists: {customer_phone}")
+            customer.email = "customer@example.com"
+            print(f"Customer account verified: {customer_phone}")
 
-        # 3. Seed 50% OFF Promotional Services (Shower, Cut, Shower + Cut)
+        # 3. Seed Services
         services_to_seed = [
             # Small Dogs
             {
@@ -179,7 +180,7 @@ def seed_db():
             },
         ]
 
-        print("\nSeeding 9 promotional grooming services (Shower, Cut, Shower + Cut)...")
+        print("\nSeeding grooming services...")
         for service_data in services_to_seed:
             existing = db.query(models.Service).filter(
                 models.Service.name == service_data["name"],
@@ -200,7 +201,7 @@ def seed_db():
                     active=True
                 )
                 db.add(db_service)
-                print(f"Added service: {service_data['name']} for {service_data['pet_type']} ({service_data['pet_size']}) - {service_data['discounted_price']} EGP (Orig: {service_data['original_price']})")
+                print(f"Added service: {service_data['name']} for {service_data['pet_type']} ({service_data['pet_size']})")
             else:
                 existing.original_price = service_data["original_price"]
                 existing.discounted_price = service_data["discounted_price"]
@@ -208,7 +209,7 @@ def seed_db():
                 existing.duration = service_data["duration"]
                 existing.description = service_data["description"]
                 existing.active = True
-                print(f"Updated service: {service_data['name']} for {service_data['pet_type']} ({service_data['pet_size']}) -> {service_data['discounted_price']} EGP")
+                print(f"Updated service: {service_data['name']} for {service_data['pet_type']} ({service_data['pet_size']})")
 
         db.commit()
         print("\nDatabase seeding completed successfully!")

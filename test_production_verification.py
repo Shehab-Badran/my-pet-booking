@@ -34,11 +34,12 @@ def run_verification():
         
         # Test 1a: Standard 11-digit Egyptian phone (010...)
         phone_standard = f"010{random.randint(10000000, 99999999)}"
+        email_standard = f"kareem_{random.randint(10000000, 99999999)}@example.com"
         res_a = client.post("/auth/register", json={
             "name": "Kareem Adel",
             "phone": phone_standard,
             "password": "SecurePassword#2026",
-            "email": "kareem@example.com"
+            "email": email_standard
         })
         assert res_a.status_code == 201, f"Standard signup failed: {res_a.text}"
         data_a = res_a.json()
@@ -51,6 +52,7 @@ def run_verification():
         expected_normalized_b = f"011{rand_suffix}"
         res_b = client.post("/auth/register", json={
             "name": "Nour Mahmoud",
+            "email": f"nour_{rand_suffix}@example.com",
             "phone": phone_with_spaces,
             "password": "SecurePassword#2026"
         })
@@ -65,6 +67,7 @@ def run_verification():
         expected_normalized_c = f"012{rand_suffix_c}"
         res_c = client.post("/auth/register", json={
             "name": "Hana Tarek",
+            "email": f"hana_{rand_suffix_c}@example.com",
             "phone": phone_with_plus20,
             "password": "SecurePassword#2026"
         })
@@ -93,6 +96,7 @@ def run_verification():
         # Test 1e: Duplicate registration handling (Must return clear 400 Bad Request message, no crash or [object Object])
         dup_res = client.post("/auth/register", json={
             "name": "Duplicate User",
+            "email": "another_unique_email@example.com",
             "phone": phone_with_spaces, # already exists
             "password": "AnotherPassword123"
         })

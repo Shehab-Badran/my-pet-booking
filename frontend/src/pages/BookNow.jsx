@@ -33,10 +33,10 @@ const formatTime12h = (timeStr) => {
   return `${displayH}:${minutes} ${ampm}`;
 };
 
-// Default fallback 30-minute slots (15:00 to 23:00)
+// Default fallback whole-hour slots (15:00 to 23:00)
 const generateDefaultSlots = () => {
   const list = [];
-  for (let min = 15 * 60; min <= 23 * 60; min += 30) {
+  for (let min = 15 * 60; min <= 23 * 60; min += 60) {
     const h = String(Math.floor(min / 60)).padStart(2, '0');
     const m = String(min % 60).padStart(2, '0');
     list.push({ time: `${h}:${m}:00`, available: true });

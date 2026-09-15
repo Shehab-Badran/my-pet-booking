@@ -1,14 +1,31 @@
+import re
 from datetime import date, time, datetime
 from typing import Optional, List
 from decimal import Decimal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# --- Helper Email Validator Regex (RFC 5322 standard compliant) ---
+EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
+
+def validate_email_format(v: str) -> str:
+    if not v or not v.strip():
+        raise ValueError("Email address is required.")
+    cleaned = v.strip().lower()
+    if not EMAIL_REGEX.match(cleaned):
+        raise ValueError("Please provide a valid email address (e.g. user@example.com).")
+    return cleaned
 
 # --- Auth & User Schemas ---
 class UserRegister(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
+    email: str = Field(..., min_length=5, max_length=150)
     phone: str = Field(..., min_length=6, max_length=30)
     password: str = Field(..., min_length=6, max_length=100)
-    email: Optional[str] = None
+
+    @field_validator("email")
+    @classmethod
+    def check_email(cls, v: str) -> str:
+        return validate_email_format(v)
 
 class UserLogin(BaseModel):
     phone: str = Field(..., min_length=3, max_length=100)  # Accepts phone or email identifier
@@ -17,6 +34,26 @@ class UserLogin(BaseModel):
 class AdminLogin(BaseModel):
     email: str = Field(..., min_length=3, max_length=100)
     password: str = Field(..., min_length=1)
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=150)
+
+    @field_validator("email")
+    @classmethod
+    def check_email(cls, v: str) -> str:
+        return validate_email_format(v)
+
+class VerifyTokenResponse(BaseModel):
+    valid: bool
+    email: Optional[str] = None
+    message: Optional[str] = None
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=10, max_length=200)
+    new_password: str = Field(..., min_length=6, max_length=100)
+
+class MessageResponse(BaseModel):
+    message: str
 
 class UserResponse(BaseModel):
     id: int
@@ -98,7 +135,7 @@ class BookingCreate(BaseModel):
     pet_size: Optional[str] = None
     service_id: Optional[int] = None
     booking_date: date
-    start_time: time  # e.g. 15:30
+    start_time: time  # e.g. 15:00
     special_notes: Optional[str] = None
 
 # --- Booking Response ---
