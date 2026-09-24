@@ -226,75 +226,57 @@ class FinalRegressionTestSuite(unittest.TestCase):
         db_cap = self.db.query(models.Setting).filter(models.Setting.key == "max_simultaneous_bookings").first()
         self.assertEqual(db_cap.value, "1")
 
-        # Target date & time
-        target_date = date.today() + timedelta(days=5)
+        # Target date & time (within 5-day window: today + 2 days)
+        target_date = date.today() + timedelta(days=2)
         # Clear existing bookings on this date for clean test
         self.db.query(models.Booking).filter(models.Booking.booking_date == target_date).delete()
         self.db.commit()
 
-        # Create customer 1 and book 16:00
-        c1_resp = self.client.post("/auth/register", json={
-            "name": "Cap Test Cust 1",
-            "email": f"cap1_{datetime.now().timestamp()}@example.com",
-            "phone": f"010{int(datetime.now().timestamp()) % 100000000:08d}",
-            "password": "password123"
-        })
-        token_1 = c1_resp.json()["access_token"]
-
+        # Customer 1 books 16:00
         b1 = self.client.post("/bookings", json={
+            "name": "Cap Test Cust 1",
+            "phone": "01011112233",
             "booking_date": target_date.isoformat(),
             "start_time": "16:00:00"
-        }, headers={"Authorization": f"Bearer {token_1}"})
+        })
         self.assertEqual(b1.status_code, 201)
 
-        # Create customer 2 and attempt same slot 16:00 -> MUST FAIL
-        c2_resp = self.client.post("/auth/register", json={
-            "name": "Cap Test Cust 2",
-            "email": f"cap2_{datetime.now().timestamp()}@example.com",
-            "phone": f"011{int(datetime.now().timestamp()) % 100000000:08d}",
-            "password": "password123"
-        })
-        token_2 = c2_resp.json()["access_token"]
-
+        # Customer 2 attempts same slot 16:00 -> MUST FAIL
         b2 = self.client.post("/bookings", json={
+            "name": "Cap Test Cust 2",
+            "phone": "01122223344",
             "booking_date": target_date.isoformat(),
             "start_time": "16:00:00"
-        }, headers={"Authorization": f"Bearer {token_2}"})
+        })
         self.assertEqual(b2.status_code, 400)
         self.assertIn("no longer available", b2.json()["detail"])
 
     # -------------------------------------------------------------
-    # 6. OPERATING HOURS & 7-DAY ADVANCE BOOKING LIMIT
+    # 6. OPERATING HOURS & 5-DAY ADVANCE BOOKING LIMIT
     # -------------------------------------------------------------
     def test_06_booking_rules_and_limits(self):
-        """Test operating hours (3 PM - 12 AM) and 7-day advance booking limit."""
-        # 1. Availability returns slots within 15:00:00 to 23:00:00
+        """Test grooming start times (1 PM - 11 PM) and 5-day advance booking limit."""
+        # 1. Availability returns slots within 13:00:00 to 23:00:00
         test_date = (date.today() + timedelta(days=1)).isoformat()
         avail_resp = self.client.get(f"/availability?booking_date={test_date}")
         self.assertEqual(avail_resp.status_code, 200)
         slots = avail_resp.json()
         slot_times = [s["time"] for s in slots]
-        self.assertIn("15:00:00", slot_times)
+        self.assertIn("13:00:00", slot_times)
         self.assertIn("23:00:00", slot_times)
-        self.assertNotIn("14:00:00", slot_times)
+        self.assertNotIn("12:00:00", slot_times)
         self.assertNotIn("00:00:00", slot_times)
 
-        # 2. Attempt booking beyond 7 days
-        far_date = (date.today() + timedelta(days=9)).isoformat()
-        reg_resp = self.client.post("/auth/register", json={
-            "name": "Booking Rule Tester",
-            "email": f"rule_tester_{datetime.now().timestamp()}@example.com",
-            "phone": f"010{int(datetime.now().timestamp() * 100) % 100000000:08d}",
-            "password": "password123"
-        })
-        self.assertEqual(reg_resp.status_code, 201)
-        token = reg_resp.json()["access_token"]
+        # 2. Attempt booking beyond 5 days
+        far_date = (date.today() + timedelta(days=6)).isoformat()
         b_far = self.client.post("/bookings", json={
+            "name": "Booking Rule Tester",
+            "phone": "01099991111",
             "booking_date": far_date,
             "start_time": "16:00:00"
-        }, headers={"Authorization": f"Bearer {token}"})
+        })
         self.assertEqual(b_far.status_code, 400)
-        self.assertIn("7 days", b_far.json()["detail"])
+        self.assertIn("5 days", b_far.json()["detail"])
 
 if __name__ == "__main__":
     unittest.main()

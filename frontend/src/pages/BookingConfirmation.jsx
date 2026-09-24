@@ -26,6 +26,9 @@ export default function BookingConfirmation({ booking, onNavigate }) {
     return `${displayH}:${minutes} ${ampm}`;
   };
 
+  const customerName = booking.customer_name || booking.user?.name || 'Guest';
+  const customerPhone = booking.customer_phone || booking.user?.phone || '—';
+
   return (
     <div className="max-w-xl mx-auto pb-16 space-y-6 animate-fade-in">
       {/* Brand logo & Confirmation Header */}
@@ -37,10 +40,10 @@ export default function BookingConfirmation({ booking, onNavigate }) {
           <CheckCircle className="w-8 h-8 text-teal-dark" />
         </div>
         <h1 className="text-3xl font-black text-plum-deep tracking-tight font-display">
-          Booking Confirmed ✓
+          Booking Confirmed! 🐾
         </h1>
         <p className="text-slate-600 text-sm max-w-sm mx-auto">
-          Your grooming appointment has been reserved successfully.
+          Your grooming appointment has been booked successfully.
         </p>
       </div>
 
@@ -60,22 +63,22 @@ export default function BookingConfirmation({ booking, onNavigate }) {
         <div className="border-t border-b border-plum-soft/60 py-4 space-y-3 text-xs sm:text-sm">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <span className="text-slate-500 block text-xs">Customer</span>
-              <span className="font-bold text-plum-deep">{booking.user?.name}</span>
+              <span className="text-slate-500 block text-xs">Customer Name</span>
+              <span className="font-bold text-plum-deep">{customerName}</span>
             </div>
             <div>
-              <span className="text-slate-500 block text-xs">Phone</span>
-              <span className="font-bold text-plum-deep font-mono">{booking.user?.phone}</span>
+              <span className="text-slate-500 block text-xs">Phone Number</span>
+              <span className="font-bold text-plum-deep font-mono">{customerPhone}</span>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <span className="text-slate-500 block text-xs">Date</span>
+              <span className="text-slate-500 block text-xs">Appointment Date</span>
               <span className="font-bold text-plum-deep">{booking.booking_date}</span>
             </div>
             <div>
-              <span className="text-slate-500 block text-xs">Time</span>
+              <span className="text-slate-500 block text-xs">Appointment Time</span>
               <span className="font-bold text-teal-dark font-mono">{formatTime12h(booking.start_time)}</span>
             </div>
           </div>
@@ -130,11 +133,11 @@ export default function BookingConfirmation({ booking, onNavigate }) {
       {/* Action Buttons */}
       <div className="flex flex-col sm:flex-row gap-3 pt-2">
         <button
-          onClick={() => onNavigate('my_bookings')}
+          onClick={() => onNavigate('book')}
           className="flex-1 bg-gradient-to-r from-plum-primary to-plum-deep hover:from-plum-dark hover:to-plum-deep text-white font-extrabold py-3.5 rounded-xl text-sm transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer border border-plum-soft/20"
         >
-          <span>View My Bookings</span>
-          <ArrowRight className="w-4 h-4 text-teal-light" />
+          <Calendar className="w-4 h-4 text-teal-light" />
+          <span>Book Another Appointment</span>
         </button>
         <button
           onClick={() => onNavigate('home')}

@@ -67,6 +67,8 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
   // Service editing state
   const [editingServiceId, setEditingServiceId] = useState(null);
   const [editingServiceData, setEditingServiceData] = useState({});
+  const [savingServices, setSavingServices] = useState({});
+  const [savedServices, setSavedServices] = useState({});
 
   // Settings editing state
   const [editingSettings, setEditingSettings] = useState({});
@@ -303,27 +305,36 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
     const payload = editingServiceData[serviceId];
     if (!payload) return;
 
+    setSavingServices((prev) => ({ ...prev, [serviceId]: true }));
+    setActionError('');
+
     fetch(`${API_BASE_URL}/admin/services/${serviceId}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ duration: payload.duration }),
     })
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to update service.');
         return data;
       })
-      .then(() => {
+      .then((updated) => {
+        setSavingServices((prev) => ({ ...prev, [serviceId]: false }));
+        setSavedServices((prev) => ({ ...prev, [serviceId]: true }));
+        setServices((prev) => prev.map((s) => (s.id === serviceId ? updated : s)));
         setEditingServiceId(null);
-        setActionSuccess('Service updated successfully.');
-        fetchServicesAndSettings();
+        setActionSuccess(`Service '${updated.name}' (${updated.pet_type}) duration saved (${updated.duration} mins).`);
+        setTimeout(() => {
+          setSavedServices((prev) => ({ ...prev, [serviceId]: false }));
+        }, 3500);
         setTimeout(() => setActionSuccess(''), 4000);
       })
       .catch((err) => {
-        setActionError(err.message);
+        setSavingServices((prev) => ({ ...prev, [serviceId]: false }));
+        setActionError(err.message || 'Failed to update service.');
         setTimeout(() => setActionError(''), 4000);
       });
   };
@@ -361,7 +372,11 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
         setSavingSettings((prev) => ({ ...prev, [key]: false }));
         setSavedSettings((prev) => ({ ...prev, [key]: true }));
         setEditingSettings((prev) => ({ ...prev, [key]: data.value }));
-        setSettings((prev) => prev.map((s) => (s.key === key ? data : s)));
+        setSettings((prev) => {
+          const exists = prev.some((s) => s.key === key);
+          if (exists) return prev.map((s) => (s.key === key ? data : s));
+          return [...prev, data];
+        });
         setActionSuccess(`Setting '${key}' saved successfully (${data.value}).`);
         setTimeout(() => {
           setSavedSettings((prev) => ({ ...prev, [key]: false }));
@@ -678,11 +693,11 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                         </span>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-bold text-xs text-plum-deep">{b.user?.name}</span>
-                            <span className="text-[10px] text-slate-600 font-mono">({b.user?.phone})</span>
+                            <span className="font-bold text-xs text-plum-deep">{b.customer_name || b.user?.name || 'Guest'}</span>
+                            <span className="text-[10px] text-slate-600 font-mono">({b.customer_phone || b.user?.phone || '—'})</span>
                           </div>
                           <span className="text-xs text-slate-700">
-                            {b.pet?.type === 'dog' ? '🐶 Dog' : '🐱 Cat'} • {b.service?.name}
+                            {b.service?.name || 'Grooming Appointment'}
                           </span>
                         </div>
                       </div>
@@ -827,14 +842,13 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                           <span className="text-slate-600 font-mono">{formatTime12h(b.start_time)}</span>
                         </td>
                         <td className="px-5 py-4">
-                          <div className="font-bold text-plum-deep">{b.user?.name}</div>
-                          <span className="text-slate-600 font-mono text-[11px]">{b.user?.phone}</span>
+                          <div className="font-bold text-plum-deep">{b.customer_name || b.user?.name || 'Guest'}</div>
+                          <span className="text-slate-600 font-mono text-[11px]">{b.customer_phone || b.user?.phone || '—'}</span>
                         </td>
                         <td className="px-5 py-4">
-                          <div className="font-bold capitalize text-plum-deep">
-                            {b.pet?.type === 'dog' ? '🐶 Dog' : '🐱 Cat'} {b.pet?.breed ? `(${b.pet.breed})` : ''}
+                          <div className="font-bold text-plum-deep">
+                            {b.service?.name || 'Grooming Appointment'}
                           </div>
-                          <span className="text-slate-600">{b.service?.name}</span>
                           {b.special_notes && (
                             <div className="text-[10px] text-plum-deep bg-gold-bg border border-gold-primary/30 px-1.5 py-0.5 rounded mt-0.5 inline-block">
                               📝 {b.special_notes}
@@ -985,14 +999,14 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
           <div className="bg-white rounded-3xl p-6 border border-plum-soft shadow-xs space-y-6">
             <div className="border-b border-plum-soft/40 pb-4">
               <h3 className="font-extrabold text-base text-plum-deep font-display">Schedule & Internal Capacity Settings</h3>
-              <p className="text-xs text-slate-500">Controls operating hours, booking window, and simultaneous booking limits.</p>
+              <p className="text-xs text-slate-500">Controls operating hours, working days, booking window, and simultaneous booking limits.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Working Hours: Opening Time */}
               <div className="p-5 bg-plum-bg/40 rounded-2xl border border-plum-soft space-y-3">
                 <div className="flex justify-between items-center">
-                  <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Opening Time</h4>
+                  <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Opening Time (Grooming Start)</h4>
                   {savedSettings['opening_time'] && (
                     <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md animate-fade-in">
                       ✓ Saved
@@ -1002,13 +1016,13 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                 <div className="flex gap-2">
                   <input
                     type="text"
-                    value={editingSettings.opening_time || '15:00:00'}
+                    value={editingSettings.opening_time !== undefined ? editingSettings.opening_time : '13:00:00'}
                     onChange={(e) => setEditingSettings({ ...editingSettings, opening_time: e.target.value })}
                     className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-mono font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"
                   />
                   <button
                     disabled={savingSettings['opening_time']}
-                    onClick={() => handleSaveSetting('opening_time', editingSettings.opening_time)}
+                    onClick={() => handleSaveSetting('opening_time', editingSettings.opening_time !== undefined ? editingSettings.opening_time : '13:00:00')}
                     className={`font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition-all ${
                       savedSettings['opening_time']
                         ? 'bg-emerald-600 text-white'
@@ -1023,7 +1037,7 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                 {errorSettings['opening_time'] ? (
                   <span className="text-[11px] text-rose-600 font-semibold block">{errorSettings['opening_time']}</span>
                 ) : (
-                  <span className="text-[10px] text-slate-500">Default: 15:00:00 (3:00 PM)</span>
+                  <span className="text-[10px] text-slate-500">Default: 13:00:00 (1:00 PM). Center general hours: 12:00 PM – 12:00 AM.</span>
                 )}
               </div>
 
@@ -1040,13 +1054,13 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                 <div className="flex gap-2">
                   <input
                     type="text"
-                    value={editingSettings.closing_time || '00:00:00'}
+                    value={editingSettings.closing_time !== undefined ? editingSettings.closing_time : '00:00:00'}
                     onChange={(e) => setEditingSettings({ ...editingSettings, closing_time: e.target.value })}
                     className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-mono font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"
                   />
                   <button
                     disabled={savingSettings['closing_time']}
-                    onClick={() => handleSaveSetting('closing_time', editingSettings.closing_time)}
+                    onClick={() => handleSaveSetting('closing_time', editingSettings.closing_time !== undefined ? editingSettings.closing_time : '00:00:00')}
                     className={`font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition-all ${
                       savedSettings['closing_time']
                         ? 'bg-emerald-600 text-white'
@@ -1065,10 +1079,48 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                 )}
               </div>
 
+              {/* Working Days */}
+              <div className="p-5 bg-plum-bg/40 rounded-2xl border border-plum-soft space-y-3">
+                <div className="flex justify-between items-center">
+                  <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Working Days</h4>
+                  {savedSettings['working_days'] && (
+                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md animate-fade-in">
+                      ✓ Saved
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={editingSettings.working_days !== undefined ? editingSettings.working_days : 'Every day (Monday – Sunday)'}
+                    onChange={(e) => setEditingSettings({ ...editingSettings, working_days: e.target.value })}
+                    className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"
+                  />
+                  <button
+                    disabled={savingSettings['working_days']}
+                    onClick={() => handleSaveSetting('working_days', editingSettings.working_days !== undefined ? editingSettings.working_days : 'Every day (Monday – Sunday)')}
+                    className={`font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition-all ${
+                      savedSettings['working_days']
+                        ? 'bg-emerald-600 text-white'
+                        : savingSettings['working_days']
+                        ? 'bg-slate-300 text-slate-600 cursor-not-allowed'
+                        : 'bg-plum-deep hover:bg-plum-dark text-white'
+                    }`}
+                  >
+                    {savingSettings['working_days'] ? 'Saving...' : savedSettings['working_days'] ? 'Saved ✓' : 'Save'}
+                  </button>
+                </div>
+                {errorSettings['working_days'] ? (
+                  <span className="text-[11px] text-rose-600 font-semibold block">{errorSettings['working_days']}</span>
+                ) : (
+                  <span className="text-[10px] text-slate-500">Default: Every day (Monday – Sunday, no regular days off).</span>
+                )}
+              </div>
+
               {/* Internal Capacity */}
               <div className="p-5 bg-plum-bg/40 rounded-2xl border border-plum-soft space-y-3">
                 <div className="flex justify-between items-center">
-                  <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Max Simultaneous Bookings (Internal Capacity)</h4>
+                  <h4 className="font-bold text-xs uppercase tracking-wider text-plum-deep font-display">Max Simultaneous Bookings (Capacity)</h4>
                   {savedSettings['max_simultaneous_bookings'] && (
                     <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md animate-fade-in">
                       ✓ Saved
@@ -1079,13 +1131,13 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                   <input
                     type="number"
                     min="1"
-                    value={editingSettings.max_simultaneous_bookings || '1'}
+                    value={editingSettings.max_simultaneous_bookings !== undefined ? editingSettings.max_simultaneous_bookings : '1'}
                     onChange={(e) => setEditingSettings({ ...editingSettings, max_simultaneous_bookings: e.target.value })}
                     className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-mono font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"
                   />
                   <button
                     disabled={savingSettings['max_simultaneous_bookings']}
-                    onClick={() => handleSaveSetting('max_simultaneous_bookings', editingSettings.max_simultaneous_bookings)}
+                    onClick={() => handleSaveSetting('max_simultaneous_bookings', editingSettings.max_simultaneous_bookings !== undefined ? editingSettings.max_simultaneous_bookings : '1')}
                     className={`font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition-all ${
                       savedSettings['max_simultaneous_bookings']
                         ? 'bg-emerald-600 text-white'
@@ -1119,13 +1171,13 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                     type="number"
                     min="15"
                     step="15"
-                    value={editingSettings.slot_interval_minutes || '60'}
+                    value={editingSettings.slot_interval_minutes !== undefined ? editingSettings.slot_interval_minutes : '60'}
                     onChange={(e) => setEditingSettings({ ...editingSettings, slot_interval_minutes: e.target.value })}
                     className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-mono font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"
                   />
                   <button
                     disabled={savingSettings['slot_interval_minutes']}
-                    onClick={() => handleSaveSetting('slot_interval_minutes', editingSettings.slot_interval_minutes)}
+                    onClick={() => handleSaveSetting('slot_interval_minutes', editingSettings.slot_interval_minutes !== undefined ? editingSettings.slot_interval_minutes : '60')}
                     className={`font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition-all ${
                       savedSettings['slot_interval_minutes']
                         ? 'bg-emerald-600 text-white'
@@ -1140,7 +1192,7 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                 {errorSettings['slot_interval_minutes'] ? (
                   <span className="text-[11px] text-rose-600 font-semibold block">{errorSettings['slot_interval_minutes']}</span>
                 ) : (
-                  <span className="text-[10px] text-slate-500">Default: 60 minutes. Whole-hour slots only (3 PM, 4 PM, etc.).</span>
+                  <span className="text-[10px] text-slate-500">Default: 60 minutes. Whole-hour slots only (1 PM, 2 PM, ..., 11 PM).</span>
                 )}
               </div>
 
@@ -1158,13 +1210,13 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                   <input
                     type="number"
                     min="1"
-                    value={editingSettings.max_booking_days_ahead || '7'}
+                    value={editingSettings.max_booking_days_ahead !== undefined ? editingSettings.max_booking_days_ahead : '5'}
                     onChange={(e) => setEditingSettings({ ...editingSettings, max_booking_days_ahead: e.target.value })}
                     className="w-full bg-white border border-plum-soft rounded-xl px-3 py-2 text-xs font-mono font-bold text-plum-deep focus:outline-none focus:ring-2 focus:ring-teal-primary"
                   />
                   <button
                     disabled={savingSettings['max_booking_days_ahead']}
-                    onClick={() => handleSaveSetting('max_booking_days_ahead', editingSettings.max_booking_days_ahead)}
+                    onClick={() => handleSaveSetting('max_booking_days_ahead', editingSettings.max_booking_days_ahead !== undefined ? editingSettings.max_booking_days_ahead : '5')}
                     className={`font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition-all ${
                       savedSettings['max_booking_days_ahead']
                         ? 'bg-emerald-600 text-white'
@@ -1179,7 +1231,7 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                 {errorSettings['max_booking_days_ahead'] ? (
                   <span className="text-[11px] text-rose-600 font-semibold block">{errorSettings['max_booking_days_ahead']}</span>
                 ) : (
-                  <span className="text-[10px] text-slate-500">Default: 7 days ahead (Today + next 6 days).</span>
+                  <span className="text-[10px] text-slate-500">Default: 5 days ahead (Today + next 4 days).</span>
                 )}
               </div>
             </div>
@@ -1206,7 +1258,7 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
                 Reschedule Booking
               </h3>
               <p className="text-xs text-slate-600">
-                {reschedulingBooking.booking_id} — {reschedulingBooking.user?.name}
+                {reschedulingBooking.booking_id} — {reschedulingBooking.customer_name || reschedulingBooking.user?.name || 'Guest'}
               </p>
             </div>
 
@@ -1223,7 +1275,7 @@ export default function Admin({ adminUser, onAdminLogin, onAdminLogout, onBackTo
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-plum-deep uppercase mb-1">New Time (3:00 PM – 12:00 AM)</label>
+                <label className="block text-xs font-bold text-plum-deep uppercase mb-1">New Time (1:00 PM – 11:00 PM)</label>
                 <input
                   type="time"
                   value={newRescheduleTime.slice(0, 5)}

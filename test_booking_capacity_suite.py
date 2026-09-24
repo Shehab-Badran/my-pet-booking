@@ -36,11 +36,11 @@ class TestBookingAndCapacityRules(unittest.TestCase):
         cls.client = TestClient(app)
 
         db = TestingSessionLocal()
-        # 1. Seed business settings (Capacity = 1 default)
-        db.add(models.Setting(key="opening_time", value="15:00:00"))
+        # 1. Seed business settings (Capacity = 1 default, 1:00 PM to 12:00 AM, 5-day advance window)
+        db.add(models.Setting(key="opening_time", value="13:00:00"))
         db.add(models.Setting(key="closing_time", value="00:00:00"))
         db.add(models.Setting(key="max_simultaneous_bookings", value="1"))
-        db.add(models.Setting(key="max_booking_days_ahead", value="7"))
+        db.add(models.Setting(key="max_booking_days_ahead", value="5"))
         db.add(models.Setting(key="slot_interval_minutes", value="60"))
 
         # 2. Seed services
@@ -107,7 +107,7 @@ class TestBookingAndCapacityRules(unittest.TestCase):
         app.dependency_overrides[get_db] = override_get_db
 
     def test_01_whole_hour_slots_only(self):
-        """Test availability endpoint returns only whole-hour slots (15:00 to 23:00) with zero :30 slots."""
+        """Test availability endpoint returns only whole-hour slots (13:00 to 23:00) with zero :30 slots."""
         tomorrow = (date.today() + timedelta(days=1)).isoformat()
         res = self.client.get(f"/availability?booking_date={tomorrow}")
         self.assertEqual(res.status_code, 200)
@@ -116,23 +116,25 @@ class TestBookingAndCapacityRules(unittest.TestCase):
 
         # Check every slot time
         for s in slots:
-            time_str = s["time"]  # e.g. "15:00:00"
+            time_str = s["time"]  # e.g. "13:00:00"
             parts = time_str.split(":")
             minute = int(parts[1])
             self.assertEqual(minute, 0, f"Slot {time_str} is not a whole-hour slot!")
 
-        # Verify exact hours generated: 15:00, 16:00, 17:00, 18:00, 19:00, 20:00, 21:00, 22:00, 23:00
+        # Verify exact hours generated: 13:00, 14:00, 15:00, 16:00, 17:00, 18:00, 19:00, 20:00, 21:00, 22:00, 23:00
         slot_hours = [int(s["time"].split(":")[0]) for s in slots]
-        self.assertIn(15, slot_hours, "3:00 PM slot must be present.")
+        self.assertIn(13, slot_hours, "1:00 PM slot must be present.")
         self.assertIn(23, slot_hours, "11:00 PM slot must be present.")
+        self.assertNotIn(12, slot_hours, "12:00 PM is before grooming opening (1 PM).")
         self.assertNotIn(0, slot_hours, "12:00 AM start slot must NOT be present as service extends past closing.")
 
     def test_02_backend_rejects_half_hour_slots(self):
         """Test backend strictly rejects any :30 booking time with 400 Bad Request."""
         target_date = (date.today() + timedelta(days=2)).isoformat()
         res = self.client.post("/bookings",
-            headers={"Authorization": f"Bearer {self.cust1_token}"},
             json={
+                "name": "Customer One",
+                "phone": "01011112222",
                 "booking_date": target_date,
                 "start_time": "15:30:00",
                 "special_notes": "Attempting half-hour slot"
@@ -142,33 +144,33 @@ class TestBookingAndCapacityRules(unittest.TestCase):
         self.assertIn("whole hours", res.json()["detail"].lower())
 
     def test_03_backend_rejects_out_of_bounds_times(self):
-        """Test backend rejects times outside operating hours and dates past 7 days."""
+        """Test backend rejects times outside operating hours and dates past 5 days."""
         target_date = (date.today() + timedelta(days=2)).isoformat()
         
-        # 2:00 PM (14:00) before opening
+        # 12:00 PM (12:00) before 1:00 PM opening
         res_early = self.client.post("/bookings",
-            headers={"Authorization": f"Bearer {self.cust1_token}"},
-            json={"booking_date": target_date, "start_time": "14:00:00"}
+            json={"name": "Customer One", "phone": "01011112222", "booking_date": target_date, "start_time": "12:00:00"}
         )
         self.assertEqual(res_early.status_code, 400)
 
-        # 8 days in the future (beyond 7 days)
-        beyond_date = (date.today() + timedelta(days=8)).isoformat()
+        # 6 days in the future (beyond 5 days limit)
+        beyond_date = (date.today() + timedelta(days=6)).isoformat()
         res_late_date = self.client.post("/bookings",
-            headers={"Authorization": f"Bearer {self.cust1_token}"},
-            json={"booking_date": beyond_date, "start_time": "16:00:00"}
+            json={"name": "Customer One", "phone": "01011112222", "booking_date": beyond_date, "start_time": "16:00:00"}
         )
         self.assertEqual(res_late_date.status_code, 400)
         self.assertIn("days in advance", res_late_date.json()["detail"].lower())
 
-    def test_04_unauthenticated_booking_rejected(self):
-        """Test unauthenticated user cannot book."""
+    def test_04_guest_booking_validation(self):
+        """Test missing name/phone is rejected."""
         target_date = (date.today() + timedelta(days=2)).isoformat()
         res = self.client.post("/bookings", json={
+            "name": "",
+            "phone": "01011112222",
             "booking_date": target_date,
             "start_time": "16:00:00"
         })
-        self.assertEqual(res.status_code, 401)
+        self.assertIn(res.status_code, [400, 422])
 
     def test_05_capacity_one_enforcement(self):
         """
@@ -182,8 +184,7 @@ class TestBookingAndCapacityRules(unittest.TestCase):
 
         # Customer 1 books
         res1 = self.client.post("/bookings",
-            headers={"Authorization": f"Bearer {self.cust1_token}"},
-            json={"booking_date": target_date, "start_time": target_time}
+            json={"name": "Customer One", "phone": "01011112222", "booking_date": target_date, "start_time": target_time}
         )
         self.assertEqual(res1.status_code, 201)
         booking1 = res1.json()
@@ -197,8 +198,7 @@ class TestBookingAndCapacityRules(unittest.TestCase):
 
         # Customer 2 attempts to book same slot -> rejected
         res2 = self.client.post("/bookings",
-            headers={"Authorization": f"Bearer {self.cust2_token}"},
-            json={"booking_date": target_date, "start_time": target_time}
+            json={"name": "Customer Two", "phone": "01033334444", "booking_date": target_date, "start_time": target_time}
         )
         self.assertEqual(res2.status_code, 400)
         self.assertIn("no longer available", res2.json()["detail"].lower())
@@ -230,8 +230,7 @@ class TestBookingAndCapacityRules(unittest.TestCase):
 
         # Customer 2 books
         res2 = self.client.post("/bookings",
-            headers={"Authorization": f"Bearer {self.cust2_token}"},
-            json={"booking_date": target_date, "start_time": target_time}
+            json={"name": "Customer Two", "phone": "01033334444", "booking_date": target_date, "start_time": target_time}
         )
         self.assertEqual(res2.status_code, 201)
 
@@ -242,8 +241,7 @@ class TestBookingAndCapacityRules(unittest.TestCase):
 
         # Customer 3 attempts to book -> rejected
         res3 = self.client.post("/bookings",
-            headers={"Authorization": f"Bearer {self.cust3_token}"},
-            json={"booking_date": target_date, "start_time": target_time}
+            json={"name": "Customer Three", "phone": "01055556666", "booking_date": target_date, "start_time": target_time}
         )
         self.assertEqual(res3.status_code, 400)
 
@@ -261,16 +259,15 @@ class TestBookingAndCapacityRules(unittest.TestCase):
 
         results = []
 
-        def attempt_book(token):
+        def attempt_book(name, phone):
             client = TestClient(app)
             r = client.post("/bookings",
-                headers={"Authorization": f"Bearer {token}"},
-                json={"booking_date": target_date, "start_time": target_time}
+                json={"name": name, "phone": phone, "booking_date": target_date, "start_time": target_time}
             )
             results.append(r.status_code)
 
-        t1 = threading.Thread(target=attempt_book, args=(self.cust1_token,))
-        t2 = threading.Thread(target=attempt_book, args=(self.cust2_token,))
+        t1 = threading.Thread(target=attempt_book, args=("Concurrent 1", "01011110001"))
+        t2 = threading.Thread(target=attempt_book, args=("Concurrent 2", "01011110002"))
 
         t1.start()
         t2.start()

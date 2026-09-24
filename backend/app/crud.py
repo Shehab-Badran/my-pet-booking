@@ -356,11 +356,11 @@ def get_available_slots(db: Session, booking_date: date, service_id: Optional[in
         if first_service:
             duration = first_service.duration
 
-    # Get dynamic business settings
-    opening_str = get_setting_value(db, "opening_time", "15:00:00")
+    # Get dynamic business settings (Default 1:00 PM to 12:00 AM, 5 days advance)
+    opening_str = get_setting_value(db, "opening_time", "13:00:00")
     closing_str = get_setting_value(db, "closing_time", "00:00:00")
     max_cap = int(get_setting_value(db, "max_simultaneous_bookings", "1"))
-    max_days = int(get_setting_value(db, "max_booking_days_ahead", "7"))
+    max_days = int(get_setting_value(db, "max_booking_days_ahead", "5"))
     slot_interval = int(get_setting_value(db, "slot_interval_minutes", "60"))
 
     # Convert settings strings to time objects
@@ -375,7 +375,7 @@ def get_available_slots(db: Session, booking_date: date, service_id: Optional[in
     op_min = opening_time.hour * 60 + opening_time.minute
     cl_min = closing_time.hour * 60 + closing_time.minute
     if cl_min <= op_min:
-        cl_min += 24 * 60  # Crossed midnight (e.g. 15:00 to 24:00/00:00)
+        cl_min += 24 * 60  # Crossed midnight (e.g. 13:00 to 24:00/00:00)
 
     # Get current time for past-slot filtering
     now = datetime.now()
@@ -415,8 +415,8 @@ def get_available_slots(db: Session, booking_date: date, service_id: Optional[in
 
 def create_booking(
     db: Session,
-    user: models.User,
-    booking_in: schemas.BookingCreate
+    booking_in: schemas.BookingCreate,
+    user: Optional[models.User] = None
 ) -> models.Booking:
     is_sqlite = db.bind.dialect.name == "sqlite"
     
@@ -424,11 +424,11 @@ def create_booking(
         sqlite_booking_lock.acquire()
 
     try:
-        # Load dynamic business settings
-        opening_str = get_setting_value(db, "opening_time", "15:00:00")
+        # Load dynamic business settings (Default 1:00 PM to 12:00 AM, 5 days advance)
+        opening_str = get_setting_value(db, "opening_time", "13:00:00")
         closing_str = get_setting_value(db, "closing_time", "00:00:00")
         max_cap = int(get_setting_value(db, "max_simultaneous_bookings", "1"))
-        max_days = int(get_setting_value(db, "max_booking_days_ahead", "7"))
+        max_days = int(get_setting_value(db, "max_booking_days_ahead", "5"))
         slot_interval = int(get_setting_value(db, "slot_interval_minutes", "60"))
 
         opening_time = datetime.strptime(opening_str, "%H:%M:%S").time()
@@ -438,28 +438,42 @@ def create_booking(
             # Row lock for PostgreSQL to prevent race conditions
             db.query(models.Setting).filter(models.Setting.key == "max_simultaneous_bookings").with_for_update().first()
 
-        # 1. Strict time rules: reject any :30 booking or non-whole-hour start times
-        if booking_in.start_time.minute % slot_interval != 0:
-            raise ValueError("Appointments must be booked on whole hours (e.g. 3:00 PM, 4:00 PM). Half-hour (:30) slots are not permitted.")
+        # 1. Validate Customer Name & Phone for Guest or Logged-in User
+        customer_name = (booking_in.name or "").strip()
+        if not customer_name and user:
+            customer_name = user.name.strip()
+        if not customer_name or len(customer_name) < 2:
+            raise ValueError("Please enter your full name.")
 
-        # 2. Validate date range
+        raw_phone = (booking_in.phone or "").strip()
+        if not raw_phone and user:
+            raw_phone = user.phone.strip()
+        clean_phone = normalize_phone_number(raw_phone) or raw_phone
+        if not clean_phone or len(clean_phone) < 6:
+            raise ValueError("Please enter a valid phone number.")
+
+        # 2. Strict time rules: reject any :30 booking or non-whole-hour start times
+        if booking_in.start_time.minute % slot_interval != 0:
+            raise ValueError("Appointments must be booked on whole hours (e.g. 1:00 PM, 2:00 PM). Half-hour (:30) slots are not permitted.")
+
+        # 3. Validate date range
         today = date.today()
         max_date = today + timedelta(days=max_days - 1)
         if booking_in.booking_date < today or booking_in.booking_date > max_date:
             raise ValueError(f"Bookings are available up to {max_days} days in advance.")
 
-        # 3. Validate service exists or use default
+        # 4. Service duration & configuration (uses active service or default 60 mins)
+        service = None
         if booking_in.service_id:
             service = get_service_by_id(db, booking_in.service_id)
-        else:
+        if not service:
             service = db.query(models.Service).filter(models.Service.active == True).first()
 
-        if not service or not service.active:
-            raise ValueError("Selected service is invalid or inactive.")
+        duration = service.duration if service else 60
 
-        # 4. Calculate start/end minutes and check operating hours
+        # 5. Calculate start/end minutes and check operating hours
         s_min = booking_in.start_time.hour * 60 + booking_in.start_time.minute
-        e_min = s_min + service.duration
+        e_min = s_min + duration
         
         op_min = opening_time.hour * 60 + opening_time.minute
         cl_min = closing_time.hour * 60 + closing_time.minute
@@ -467,57 +481,12 @@ def create_booking(
             cl_min += 24 * 60
 
         if s_min < op_min or e_min > cl_min:
-            raise ValueError(f"Grooming appointments are available from {opening_str[:5]} to {closing_str[:5]}. Appointments cannot extend past closing.")
+            raise ValueError("Grooming appointments are available with start times from 1:00 PM to 11:00 PM (closing at 12:00 AM). Appointments cannot extend past closing.")
 
-        # 5. Check for past slots today
+        # 6. Check for past slots today
         now = datetime.now()
         if booking_in.booking_date == now.date() and s_min <= (now.hour * 60 + now.minute):
             raise ValueError("Cannot book a time slot in the past.")
-
-        # 6. Pet Info & Pricing Mapping
-        pet_breed = None
-        pet_size = None
-        pet_type = "dog"
-
-        if booking_in.pet_type == "dog":
-            pet_size = booking_in.pet_size if booking_in.pet_size in ["small", "large"] else "small"
-            pet_breed = booking_in.pet_breed.strip() if (booking_in.pet_breed and booking_in.pet_breed.strip()) else "Dog"
-            pet_type = "dog"
-
-            if service.pet_type != "dog" or service.pet_size != pet_size:
-                alternative_service = db.query(models.Service).filter(
-                    models.Service.name == service.name,
-                    models.Service.pet_type == "dog",
-                    models.Service.pet_size == pet_size,
-                    models.Service.active == True
-                ).first()
-                if alternative_service:
-                    service = alternative_service
-
-        elif booking_in.pet_type == "cat":
-            pet_breed = booking_in.pet_breed.strip() if (booking_in.pet_breed and booking_in.pet_breed.strip()) else "Cat"
-            pet_size = None
-            pet_type = "cat"
-
-            if service.pet_type != "cat" and not (service.pet_type == "dog" and service.pet_size == "small"):
-                alternative_service = db.query(models.Service).filter(
-                    models.Service.name == service.name,
-                    models.Service.pet_type == "cat",
-                    models.Service.active == True
-                ).first()
-                if not alternative_service:
-                    alternative_service = db.query(models.Service).filter(
-                        models.Service.name == service.name,
-                        models.Service.pet_type == "dog",
-                        models.Service.pet_size == "small",
-                        models.Service.active == True
-                    ).first()
-                if alternative_service:
-                    service = alternative_service
-        else:
-            pet_type = "dog"
-            pet_size = "small"
-            pet_breed = "Pet"
 
         # 7. Verify capacity availability (dynamically respects admin configured capacity, default 1)
         end_hour = (e_min // 60) % 24
@@ -534,13 +503,31 @@ def create_booking(
         if not is_available:
             raise ValueError("This time slot is no longer available. Please choose another time.")
 
-        # 8. Pet creation / association
+        # 8. User & Pet creation / association (auto-links guest user to satisfy database constraints)
+        if not user:
+            user = get_user_by_phone(db, clean_phone)
+            if not user:
+                user = models.User(
+                    name=customer_name,
+                    phone=clean_phone,
+                    email=None,
+                    password_hash=hash_password(secrets.token_urlsafe(16)),
+                    role="customer"
+                )
+                db.add(user)
+                db.commit()
+                db.refresh(user)
+            elif customer_name and user.name != customer_name:
+                user.name = customer_name
+                db.commit()
+                db.refresh(user)
+
         pet = get_or_create_pet(
             db,
             user_id=user.id,
-            pet_type=pet_type,
-            breed=pet_breed,
-            size=pet_size
+            pet_type="pet",
+            breed=None,
+            size=None
         )
 
         # 9. Generate Guaranteed Unique Booking ID (e.g. MPC-000123)
@@ -551,16 +538,18 @@ def create_booking(
             base_num += 1
             booking_id = f"MPC-{base_num:06d}"
 
-        # 10. Create Booking with backend calculated price
+        # 10. Create Guest / Customer Booking
         db_booking = models.Booking(
             booking_id=booking_id,
+            customer_name=customer_name,
+            customer_phone=clean_phone,
             user_id=user.id,
             pet_id=pet.id,
-            service_id=service.id,
+            service_id=service.id if service else None,
             booking_date=booking_in.booking_date,
             start_time=booking_in.start_time,
             end_time=end_time,
-            price=service.discounted_price,
+            price=service.discounted_price if service else 0,
             special_notes=booking_in.special_notes.strip() if booking_in.special_notes else None,
             status="confirmed"
         )
@@ -606,10 +595,23 @@ def get_bookings(
         query = query.filter(models.Booking.status == status)
 
     if customer_name:
-        query = query.join(models.User).filter(models.User.name.ilike(f"%{customer_name}%"))
+        query = query.outerjoin(models.User).filter(
+            or_(
+                models.Booking.customer_name.ilike(f"%{customer_name}%"),
+                models.User.name.ilike(f"%{customer_name}%")
+            )
+        )
         
     if phone:
-        query = query.join(models.User, isouter=True).filter(models.User.phone.contains(phone))
+        clean_phone = normalize_phone_number(phone) or phone.strip()
+        query = query.outerjoin(models.User).filter(
+            or_(
+                models.Booking.customer_phone.contains(clean_phone),
+                models.Booking.customer_phone.contains(phone.strip()),
+                models.User.phone.contains(clean_phone),
+                models.User.phone.contains(phone.strip())
+            )
+        )
 
     return query.order_by(models.Booking.booking_date.desc(), models.Booking.start_time.asc()).limit(limit).all()
 
@@ -631,15 +633,13 @@ def reschedule_booking(
     if not db_booking:
         raise ValueError("Booking not found.")
 
-    service = db_booking.service
-    if not service:
-        raise ValueError("Associated service not found.")
+    duration = db_booking.service.duration if db_booking.service else 60
 
-    # Business settings
-    opening_str = get_setting_value(db, "opening_time", "15:00:00")
+    # Business settings (Default 1:00 PM to 12:00 AM, 5 days advance)
+    opening_str = get_setting_value(db, "opening_time", "13:00:00")
     closing_str = get_setting_value(db, "closing_time", "00:00:00")
     max_cap = int(get_setting_value(db, "max_simultaneous_bookings", "1"))
-    max_days = int(get_setting_value(db, "max_booking_days_ahead", "7"))
+    max_days = int(get_setting_value(db, "max_booking_days_ahead", "5"))
     slot_interval = int(get_setting_value(db, "slot_interval_minutes", "60"))
 
     opening_time = datetime.strptime(opening_str, "%H:%M:%S").time()
@@ -647,7 +647,7 @@ def reschedule_booking(
 
     # 1. Enforce whole-hour start times
     if new_start_time.minute % slot_interval != 0:
-        raise ValueError("Appointments must be scheduled on whole hours (e.g. 3:00 PM, 4:00 PM). Half-hour (:30) slots are not allowed.")
+        raise ValueError("Appointments must be scheduled on whole hours (e.g. 1:00 PM, 2:00 PM). Half-hour (:30) slots are not allowed.")
 
     # 2. Date range
     today = date.today()
@@ -657,7 +657,7 @@ def reschedule_booking(
 
     # 3. Time bounds
     s_min = new_start_time.hour * 60 + new_start_time.minute
-    e_min = s_min + service.duration
+    e_min = s_min + duration
     
     op_min = opening_time.hour * 60 + opening_time.minute
     cl_min = closing_time.hour * 60 + closing_time.minute
@@ -665,7 +665,7 @@ def reschedule_booking(
         cl_min += 24 * 60
 
     if s_min < op_min or e_min > cl_min:
-        raise ValueError(f"Grooming appointments are available from {opening_str[:5]} to {closing_str[:5]}. Appointments cannot extend past closing.")
+        raise ValueError("Grooming appointments are available with start times from 1:00 PM to 11:00 PM (closing at 12:00 AM). Appointments cannot extend past closing.")
 
     end_hour = (e_min // 60) % 24
     end_minute = e_min % 60
@@ -717,7 +717,7 @@ def get_dashboard_stats(db: Session) -> schemas.DashboardStats:
     ).limit(10).all()
 
     # 4. Today's Capacity Percentage
-    opening_str = get_setting_value(db, "opening_time", "15:00:00")
+    opening_str = get_setting_value(db, "opening_time", "13:00:00")
     closing_str = get_setting_value(db, "closing_time", "00:00:00")
     max_cap = int(get_setting_value(db, "max_simultaneous_bookings", "1"))
 

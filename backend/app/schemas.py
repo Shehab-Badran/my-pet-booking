@@ -130,25 +130,29 @@ class PetResponse(PetBase):
 
 # --- Booking Creation Request ---
 class BookingCreate(BaseModel):
-    pet_type: Optional[str] = "pet"
+    name: Optional[str] = Field(None, max_length=100)
+    phone: Optional[str] = Field(None, max_length=30)
+    booking_date: date
+    start_time: time  # e.g. 13:00:00
+    special_notes: Optional[str] = None
+    pet_type: Optional[str] = None
     pet_breed: Optional[str] = None
     pet_size: Optional[str] = None
     service_id: Optional[int] = None
-    booking_date: date
-    start_time: time  # e.g. 15:00
-    special_notes: Optional[str] = None
 
 # --- Booking Response ---
 class BookingResponse(BaseModel):
     id: int
     booking_id: str
-    user: UserResponse
-    pet: PetResponse
-    service: ServiceResponse
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    user: Optional[UserResponse] = None
+    pet: Optional[PetResponse] = None
+    service: Optional[ServiceResponse] = None
     booking_date: date
     start_time: time
     end_time: time
-    price: Decimal
+    price: Optional[Decimal] = Decimal(0)
     special_notes: Optional[str] = None
     status: str
     created_at: datetime

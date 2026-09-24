@@ -363,7 +363,7 @@ export default function Home({ onNavigate, setPreselectedService }) {
             <Clock className="w-6 h-6 text-teal-dark" />
           </div>
           <div>
-            <h3 className="font-extrabold text-plum-deep text-base font-display">Every Day 3 PM – 12 AM</h3>
+            <h3 className="font-extrabold text-plum-deep text-base font-display">Every Day 12:00 PM – 12:00 AM</h3>
             <p className="text-slate-600 text-xs mt-1 leading-relaxed">
               Open 7 days a week with extended evening hours and no regular days off.
             </p>
@@ -439,7 +439,7 @@ export default function Home({ onNavigate, setPreselectedService }) {
                   </div>
                   <div>
                     <span className="text-slate-500 text-[11px] font-bold block uppercase">Working Hours</span>
-                    <span className="font-extrabold text-plum-deep text-xs block">Every day: 3 PM – 12 AM</span>
+                    <span className="font-extrabold text-plum-deep text-xs block">Every day: 12:00 PM – 12:00 AM</span>
                   </div>
                 </div>
               </div>

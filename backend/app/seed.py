@@ -9,6 +9,13 @@ def seed_db():
     
     # Auto-migrate SQLite missing columns if any
     with engine.connect() as conn:
+        for col, col_type in [("customer_name", "VARCHAR"), ("customer_phone", "VARCHAR")]:
+            try:
+                conn.execute(text(f"ALTER TABLE bookings ADD COLUMN {col} {col_type}"))
+                conn.commit()
+                print(f"Migrated database: added '{col}' column to bookings table.")
+            except Exception:
+                pass
         try:
             conn.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR"))
             conn.commit()
@@ -18,12 +25,13 @@ def seed_db():
 
     db = SessionLocal()
     try:
-        # 1. Business Settings (Internal Scheduling Rules)
+        # 1. Business Settings (Internal Scheduling Rules - 1:00 PM to 12:00 AM, 5-day advance booking)
         settings_to_seed = {
-            "opening_time": "15:00:00",
+            "opening_time": "13:00:00",
             "closing_time": "00:00:00",
+            "working_days": "Every day (Monday - Sunday)",
             "max_simultaneous_bookings": "1",
-            "max_booking_days_ahead": "7",
+            "max_booking_days_ahead": "5",
             "slot_interval_minutes": "60"
         }
 
@@ -35,8 +43,7 @@ def seed_db():
                 db.add(db_setting)
                 print(f"Added setting: {key} = {val}")
             else:
-                existing.value = val
-                print(f"Setting updated: {key} = {val}")
+                print(f"Preserving existing setting: {key} = {existing.value}")
 
         # 2. Seed Admin & Test Customer Users
         print("\nSeeding users from secure environment configuration...")
@@ -63,7 +70,7 @@ def seed_db():
             admin.email = admin_email
             admin.phone = admin_phone
             admin.password_hash = hash_password(admin_password)
-            print(f"Admin account updated/verified: Email={admin_email}, Phone={admin_phone}")
+            print(f"Admin account verified: Email={admin_email}, Phone={admin_phone}")
 
         customer_phone = "01234567890"
         customer = db.query(models.User).filter(models.User.phone == customer_phone).first()
@@ -203,13 +210,7 @@ def seed_db():
                 db.add(db_service)
                 print(f"Added service: {service_data['name']} for {service_data['pet_type']} ({service_data['pet_size']})")
             else:
-                existing.original_price = service_data["original_price"]
-                existing.discounted_price = service_data["discounted_price"]
-                existing.discount_percentage = service_data["discount_percentage"]
-                existing.duration = service_data["duration"]
-                existing.description = service_data["description"]
-                existing.active = True
-                print(f"Updated service: {service_data['name']} for {service_data['pet_type']} ({service_data['pet_size']})")
+                print(f"Preserving existing service config: {service_data['name']} for {service_data['pet_type']} ({service_data['pet_size']})")
 
         db.commit()
         print("\nDatabase seeding completed successfully!")

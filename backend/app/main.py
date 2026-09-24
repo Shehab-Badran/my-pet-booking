@@ -23,6 +23,12 @@ from fastapi.responses import JSONResponse, FileResponse
 # Auto-create and migrate database tables on startup
 Base.metadata.create_all(bind=engine)
 with engine.connect() as conn:
+    for col, col_type in [("customer_name", "VARCHAR"), ("customer_phone", "VARCHAR")]:
+        try:
+            conn.execute(text(f"ALTER TABLE bookings ADD COLUMN {col} {col_type}"))
+            conn.commit()
+        except Exception:
+            pass
     try:
         conn.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR"))
         conn.commit()
@@ -266,17 +272,16 @@ def get_booking_by_id(booking_id: str, db: Session = Depends(get_db)):
     return db_booking
 
 
-# --- CUSTOMER AUTHENTICATED ENDPOINTS ---
+# --- PUBLIC BOOKING CREATION ENDPOINT ---
 
 @app.post("/bookings", response_model=schemas.BookingResponse, status_code=status.HTTP_201_CREATED)
 def create_booking(
     booking: schemas.BookingCreate,
-    current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create a new grooming booking for the logged-in customer."""
+    """Create a new grooming booking directly as a guest without login."""
     try:
-        db_booking = crud.create_booking(db, user=current_user, booking_in=booking)
+        db_booking = crud.create_booking(db, booking_in=booking)
         return db_booking
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -400,6 +405,11 @@ def update_admin_service(
         raise HTTPException(status_code=404, detail="Service not found.")
     return db_service
 
+@app.get("/settings", response_model=List[schemas.SettingBase])
+def read_public_settings(db: Session = Depends(get_db)):
+    """Fetch public schedule settings (operating hours, working days, booking window)."""
+    return crud.get_settings(db)
+
 @app.get("/admin/settings", response_model=List[schemas.SettingBase])
 def read_admin_settings(
     admin_user: models.User = Depends(require_admin),
@@ -415,22 +425,28 @@ def update_admin_setting(
     admin_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """Update a business setting configuration with strict validation."""
+    """Update a business setting configuration with strict validation and database persistence."""
     val = setting_update.value.strip()
+    if not val:
+        raise HTTPException(status_code=400, detail="Setting value cannot be empty.")
+
     if key in ["opening_time", "closing_time"]:
         try:
             datetime.strptime(val, "%H:%M:%S")
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid time format. Use HH:MM:SS (e.g. 15:00:00).")
+            raise HTTPException(status_code=400, detail="Invalid time format. Use HH:MM:SS (e.g. 13:00:00 or 00:00:00).")
     elif key == "max_simultaneous_bookings":
         if not val.isdigit() or int(val) <= 0:
             raise HTTPException(status_code=400, detail="Capacity must be a positive integer (e.g. 1, 2, 3).")
     elif key == "max_booking_days_ahead":
         if not val.isdigit() or int(val) <= 0:
-            raise HTTPException(status_code=400, detail="Booking window days must be a positive integer (e.g. 7).")
+            raise HTTPException(status_code=400, detail="Booking window days must be a positive integer (e.g. 5).")
     elif key == "slot_interval_minutes":
         if not val.isdigit() or int(val) <= 0:
             raise HTTPException(status_code=400, detail="Slot interval must be a positive integer in minutes (e.g. 60).")
+    elif key == "working_days":
+        if len(val) < 2:
+            raise HTTPException(status_code=400, detail="Working days description must be at least 2 characters.")
 
     db_setting = crud.update_setting(db, key, val)
     if not db_setting:

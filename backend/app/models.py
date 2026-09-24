@@ -88,17 +88,28 @@ class Booking(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     booking_id = Column(String, unique=True, index=True, nullable=False)  # e.g. MPC-000123
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    pet_id = Column(Integer, ForeignKey("pets.id"), nullable=False)
-    service_id = Column(Integer, ForeignKey("services.id"), nullable=False)
+    customer_name = Column(String, nullable=True)
+    customer_phone = Column(String, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    pet_id = Column(Integer, ForeignKey("pets.id"), nullable=True)
+    service_id = Column(Integer, ForeignKey("services.id"), nullable=True)
     booking_date = Column(Date, nullable=False, index=True)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
-    price = Column(Numeric(10, 2), nullable=False)
+    price = Column(Numeric(10, 2), nullable=True, default=0)
     special_notes = Column(Text, nullable=True)
-    status = Column(String, default="confirmed", nullable=False)  # 'confirmed', 'completed', 'no-show'
+    status = Column(String, default="confirmed", nullable=False)  # 'confirmed', 'completed', 'no-show', 'blocked'
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Helper properties for customer display
+    @property
+    def display_name(self):
+        return self.customer_name or (self.user.name if self.user else "Guest")
+
+    @property
+    def display_phone(self):
+        return self.customer_phone or (self.user.phone if self.user else "")
 
     # Relationships
     user = relationship("User", back_populates="bookings")
