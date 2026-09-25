@@ -7,10 +7,9 @@ databases:
 services:
   - type: web
     name: my-pet-center
-    env: python
+    env: docker
     plan: free
-    buildCommand: "cd frontend && npm install && npm run build && cd .. && pip install -r backend/requirements.txt"
-    startCommand: "python -m backend.app.seed && uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT"
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: DATABASE_URL
         fromDatabase:
