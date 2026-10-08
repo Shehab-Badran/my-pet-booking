@@ -454,6 +454,12 @@ def update_admin_setting(
     return db_setting
 
 
+@app.get("/health")
+def health_check():
+    """Railway deployment health check."""
+    return {"status": "ok"}
+
+
 # --- STATIC PRODUCTION FRONTEND SERVING & SPA ROUTING ---
 DIST_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
 
