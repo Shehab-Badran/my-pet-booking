@@ -147,7 +147,7 @@ Phone: 01200888841
     </div>
     <div class="footer">
       <p style="margin: 0 0 4px 0; font-weight: 700; color: #26132C;">My Pet Center — Sheikh Zayed</p>
-      <p style="margin: 0; font-size: 11px;">الشيخ زايد – زايد 4 – Chill Out | 📞 01200888841</p>
+      <p style="margin: 0; font-size: 11px;">Sheikh Zayed – Gate 4, in front of New Cairo University – Chillout | 📞 01200888841</p>
     </div>
   </div>
 </body>

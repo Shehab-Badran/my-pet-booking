@@ -167,7 +167,7 @@ export default function MyBookings({ currentUser, onNavigate, onOpenAuth }) {
                     )}
 
                     <div className="border-t border-plum-soft/40 pt-3 flex justify-between items-center text-xs">
-                      <span className="text-slate-600 font-medium font-arabic">📍 الشيخ زايد – Chill Out</span>
+                      <span className="text-slate-600 font-medium">📍 Sheikh Zayed – Gate 4, in front of New Cairo University – Chillout</span>
                       <span className="text-teal-dark font-bold">Pay at Center</span>
                     </div>
                   </div>

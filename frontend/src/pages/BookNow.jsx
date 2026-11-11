@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Calendar,
-  Clock,
   User,
   Phone,
   CheckCircle,
@@ -9,18 +8,31 @@ import {
   ArrowRight,
   Sparkles,
   MapPin,
-  Heart,
-  ExternalLink
+  ExternalLink,
+  Download,
+  Navigation,
+  MessageCircle,
+  RotateCcw
 } from 'lucide-react';
 import Logo from '../components/Logo';
 import { API_BASE_URL } from '../config';
 
-// Helper for local YYYY-MM-DD formatting (prevents UTC timezone shift bugs)
-const formatLocalDate = (d) => {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+// Compute YYYY-MM-DD in Africa/Cairo timezone
+const getCairoDateString = (offsetDays = 0) => {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Cairo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const cairoTodayStr = formatter.format(now);
+  const [year, month, day] = cairoTodayStr.split('-').map(Number);
+  const targetDate = new Date(Date.UTC(year, month - 1, day + offsetDays));
+  const y = targetDate.getUTCFullYear();
+  const m = String(targetDate.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(targetDate.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 };
 
 // 12-hour time formatter (e.g. 13:00:00 -> 1:00 PM, 23:00:00 -> 11:00 PM)
@@ -33,91 +45,121 @@ const formatTime12h = (timeStr) => {
   return `${displayH}:${minutes} ${ampm}`;
 };
 
-// Default fallback whole-hour slots (1:00 PM to 11:00 PM -> 13:00 to 23:00)
-const generateDefaultSlots = () => {
-  const list = [];
-  for (let min = 13 * 60; min <= 23 * 60; min += 60) {
-    const h = String(Math.floor(min / 60)).padStart(2, '0');
-    const m = String(min % 60).padStart(2, '0');
-    list.push({ time: `${h}:${m}:00`, available: true });
+// Egyptian phone normalizer and validator
+const normalizeEgyptianPhone = (str) => {
+  if (!str) return '';
+  const arabicToAscii = {
+    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
+    '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
+  };
+  let cleaned = str.replace(/[٠-٩]/g, (d) => arabicToAscii[d] || d);
+  cleaned = cleaned.replace(/\D/g, '');
+
+  if (cleaned.startsWith('0020')) {
+    cleaned = cleaned.substring(4);
+  } else if (cleaned.startsWith('20') && cleaned.length >= 11) {
+    cleaned = cleaned.substring(2);
   }
-  return list;
+
+  if (['10', '11', '12', '15'].some((p) => cleaned.startsWith(p)) && cleaned.length === 10) {
+    cleaned = '0' + cleaned;
+  }
+  return cleaned;
+};
+
+const isValidEgyptianPhone = (str) => {
+  const norm = normalizeEgyptianPhone(str);
+  return /^01[0125][0-9]{8}$/.test(norm);
 };
 
 export default function BookNow({ onNavigate, onBookingComplete }) {
-  // Generate available booking dates starting from today in local time (5 days window)
+  // Generate 5-day booking window in Africa/Cairo timezone
   const availableDates = (() => {
     const list = [];
-    const today = new Date();
     for (let i = 0; i < 5; i++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() + i);
-      const isoStr = formatLocalDate(d);
-      const dayName = i === 0 ? 'Today' : d.toLocaleDateString('en-US', { weekday: 'short' });
-      const monthDay = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      list.push({ iso: isoStr, dayName, monthDay, isToday: i === 0 });
+      const isoStr = getCairoDateString(i);
+      const [y, m, dayNum] = isoStr.split('-').map(Number);
+      const d = new Date(Date.UTC(y, m - 1, dayNum));
+      const dayName = i === 0 ? 'Today' : d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+      const monthDay = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+      const isFriday = d.getUTCDay() === 5;
+      list.push({ iso: isoStr, dayName, monthDay, isToday: i === 0, isFriday });
     }
     return list;
   })();
 
-  // Step 1 & 2: Date & Time Selections
-  const [selectedDate, setSelectedDate] = useState(() => formatLocalDate(new Date()));
+  const [selectedDate, setSelectedDate] = useState(() => getCairoDateString(0));
   const [selectedTime, setSelectedTime] = useState('');
-
-  // Step 3: Customer Information (Only Full Name & Phone Number required)
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [specialNotes, setSpecialNotes] = useState('');
 
-  // UI / slots state
-  const [slots, setSlots] = useState(generateDefaultSlots());
+  const [slots, setSlots] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
+  const [slotsError, setSlotsError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [phoneError, setPhoneError] = useState('');
   const [confirmedBookingData, setConfirmedBookingData] = useState(null);
 
-  // Fetch live available time slots for the selected date (1:00 PM – 11:00 PM start times)
-  useEffect(() => {
-    if (selectedDate) {
-      setLoadingSlots(true);
-      setSelectedTime(''); // Reset time selection on date switch
-      setErrorMessage('');
+  const fetchSlots = useCallback(async (dateToFetch) => {
+    if (!dateToFetch) return;
+    setLoadingSlots(true);
+    setSlotsError(false);
+    setSelectedTime('');
 
-      fetch(`${API_BASE_URL}/availability?booking_date=${selectedDate}`)
-        .then((res) => {
-          if (!res.ok) throw new Error('Could not load time slots.');
-          return res.json();
-        })
-        .then((data) => {
-          if (Array.isArray(data) && data.length > 0) {
-            setSlots(data);
-          } else {
-            setSlots(generateDefaultSlots());
-          }
-          setLoadingSlots(false);
-        })
-        .catch((err) => {
-          console.error(err);
-          setSlots(generateDefaultSlots());
-          setLoadingSlots(false);
-        });
+    try {
+      const res = await fetch(`${API_BASE_URL}/availability?booking_date=${dateToFetch}`);
+      if (!res.ok) {
+        throw new Error(`Failed to load time slots (HTTP ${res.status})`);
+      }
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setSlots(data);
+      } else {
+        setSlots([]);
+      }
+    } catch (err) {
+      console.error('Failed to load slots:', err);
+      setSlots([]);
+      setSlotsError(true);
+    } finally {
+      setLoadingSlots(false);
     }
-  }, [selectedDate]);
+  }, []);
 
-  // Human date formatter
+  // Fetch slots whenever selectedDate changes
+  useEffect(() => {
+    fetchSlots(selectedDate);
+  }, [selectedDate, fetchSlots]);
+
   const formatDateDisplay = (dateStr) => {
     if (!dateStr) return '';
-    const d = new Date(dateStr + 'T00:00:00');
-    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    const [y, m, dayNum] = dateStr.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1, dayNum));
+    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
   };
 
-  // Submit Guest Booking
+  const handlePhoneChange = (e) => {
+    const val = e.target.value;
+    setPhone(val);
+    if (val.trim().length > 3) {
+      if (!isValidEgyptianPhone(val)) {
+        setPhoneError('Please enter a valid Egyptian mobile number (e.g. 01012345678 or +201012345678)');
+      } else {
+        setPhoneError('');
+      }
+    } else {
+      setPhoneError('');
+    }
+  };
+
   const handleConfirmBooking = async (e) => {
     e.preventDefault();
     setErrorMessage('');
 
     if (!selectedDate) {
-      setErrorMessage('Please choose an appointment day.');
+      setErrorMessage('Please choose an appointment date.');
       return;
     }
 
@@ -132,16 +174,16 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
       return;
     }
 
-    const cleanPhone = phone.trim();
-    if (!cleanPhone || cleanPhone.length < 6) {
-      setErrorMessage('Please enter a valid phone number.');
+    const cleanPhone = normalizeEgyptianPhone(phone);
+    if (!cleanPhone || !isValidEgyptianPhone(cleanPhone)) {
+      setPhoneError('Please enter a valid Egyptian mobile number (e.g. 01012345678 or +201012345678)');
+      setErrorMessage('Please provide a valid Egyptian mobile number.');
       return;
     }
 
     setSubmitting(true);
 
     try {
-      // Create Guest Booking with Name + Phone (Zero prices involved)
       const bookingPayload = {
         name: cleanName,
         phone: cleanPhone,
@@ -158,15 +200,32 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
         body: JSON.stringify(bookingPayload),
       });
 
-      const bookingData = await bookingRes.json();
+      const bookingData = await bookingRes.json().catch(() => ({}));
       if (!bookingRes.ok) {
-        let bErr = 'Failed to confirm booking.';
+        let bErr = '';
         if (typeof bookingData.detail === 'string') {
           bErr = bookingData.detail;
         } else if (Array.isArray(bookingData.detail)) {
           bErr = bookingData.detail.map((d) => d.msg || 'Invalid field').join(', ');
         }
-        throw new Error(bErr);
+
+        const lowerDetail = bErr.toLowerCase();
+        if (
+          bookingRes.status === 409 ||
+          lowerDetail.includes('no longer available') ||
+          lowerDetail.includes('already booked') ||
+          lowerDetail.includes('taken') ||
+          lowerDetail.includes('capacity')
+        ) {
+          fetchSlots(selectedDate);
+          throw new Error('This time was just booked. Please choose another available time.');
+        }
+
+        if (bookingRes.status >= 500) {
+          throw new Error('Unable to confirm booking. Please try again.');
+        }
+
+        throw new Error(bErr || 'Unable to confirm booking. Please try again.');
       }
 
       setSubmitting(false);
@@ -176,126 +235,174 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
       }
     } catch (err) {
       setSubmitting(false);
-      setErrorMessage(err.message || 'An error occurred while confirming your booking. Please try again.');
+      setErrorMessage(err.message || 'Unable to confirm booking. Please try again.');
     }
   };
 
-  // --- STEP 5: DEDICATED CONFIRMATION SCREEN ---
+  // Add to Calendar (.ics download)
+  const handleDownloadIcs = () => {
+    if (!confirmedBookingData) return;
+    const title = 'My Pet Center - Grooming Appointment';
+    const description = `Grooming appointment for ${confirmedBookingData.customer_name}. Ref: ${confirmedBookingData.booking_id}.`;
+    const location = 'My Pet Center, Sheikh Zayed – Gate 4, in front of New Cairo University – Chillout';
+
+    const dateStr = confirmedBookingData.booking_date.replace(/-/g, '');
+    const startParts = (confirmedBookingData.start_time || '12:00:00').split(':');
+    const endParts = (confirmedBookingData.end_time || '13:00:00').split(':');
+
+    const dtStart = `${dateStr}T${startParts[0].padStart(2, '0')}${startParts[1].padStart(2, '0')}00`;
+    const dtEnd = `${dateStr}T${endParts[0].padStart(2, '0')}${endParts[1].padStart(2, '0')}00`;
+
+    const icsContent = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//My Pet Center//Grooming Booking//EN',
+      'CALSCALE:GREGORIAN',
+      'BEGIN:VEVENT',
+      `SUMMARY:${title}`,
+      `DESCRIPTION:${description}`,
+      `LOCATION:${location}`,
+      `DTSTART:${dtStart}`,
+      `DTEND:${dtEnd}`,
+      'STATUS:CONFIRMED',
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\r\n');
+
+    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `MyPetCenter_${confirmedBookingData.booking_id}.ics`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const getGoogleCalendarUrl = () => {
+    if (!confirmedBookingData) return '#';
+    const title = encodeURIComponent('My Pet Center - Grooming Appointment');
+    const details = encodeURIComponent(`Grooming appointment. Ref: ${confirmedBookingData.booking_id}`);
+    const location = encodeURIComponent('My Pet Center, Sheikh Zayed – Gate 4, in front of New Cairo University – Chillout');
+    const dateStr = confirmedBookingData.booking_date.replace(/-/g, '');
+    const startParts = (confirmedBookingData.start_time || '12:00:00').split(':');
+    const endParts = (confirmedBookingData.end_time || '13:00:00').split(':');
+    const dtStart = `${dateStr}T${startParts[0].padStart(2, '0')}${startParts[1].padStart(2, '0')}00`;
+    const dtEnd = `${dateStr}T${endParts[0].padStart(2, '0')}${endParts[1].padStart(2, '0')}00`;
+    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${dtStart}/${dtEnd}&details=${details}&location=${location}`;
+  };
+
+  // Dedicated Post-Confirmation Screen (Compact Ticket Design)
   if (confirmedBookingData) {
-    const bookingCustName = confirmedBookingData.customer_name || confirmedBookingData.user?.name || fullName;
-    const bookingCustPhone = confirmedBookingData.customer_phone || confirmedBookingData.user?.phone || phone;
+    const bookingCustName = confirmedBookingData.customer_name || fullName;
+    const whatsappUrl = `https://wa.me/201200888841?text=${encodeURIComponent(`Hello My Pet Center, I need to make changes to my booking ${confirmedBookingData.booking_id}`)}`;
 
     return (
-      <div className="max-w-xl mx-auto py-8 sm:py-12 space-y-6 animate-fade-in">
-        <div className="glass-card-plum rounded-3xl p-6 sm:p-10 border border-plum-soft shadow-2xl text-center space-y-6">
+      <div className="max-w-md mx-auto py-8 sm:py-12 px-4 space-y-6 animate-fade-in">
+        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-plum-soft shadow-xl text-center space-y-5">
           <div className="flex justify-center">
-            <Logo size="lg" />
+            <Logo size="md" />
           </div>
 
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-teal-veryLight text-teal-deep rounded-full border-4 border-teal-light shadow-inner">
-            <CheckCircle className="w-10 h-10 text-teal-dark" />
-          </div>
-
-          <div className="space-y-1">
-            <h1 className="text-3xl sm:text-4xl font-black text-plum-deep tracking-tight font-display">
+          <div className="space-y-2">
+            <div className="inline-flex items-center justify-center w-12 h-12 bg-teal-veryLight text-teal-deep rounded-full border-2 border-teal-light shadow-inner">
+              <CheckCircle className="w-7 h-7 text-teal-dark" />
+            </div>
+            <h1 className="text-2xl font-black text-plum-deep tracking-tight font-display">
               Booking Confirmed! 🐾
             </h1>
             <p className="text-slate-600 text-xs sm:text-sm">
-              Your grooming appointment has been booked successfully.
+              We look forward to seeing you and your pet!
             </p>
           </div>
 
-          {/* Booking ID Badge */}
-          <div className="bg-gradient-to-r from-plum-deep via-plum-dark to-[#16081B] text-white rounded-2xl p-5 shadow-lg border border-plum-soft/30">
-            <span className="text-[11px] text-teal-light block uppercase tracking-widest font-extrabold mb-1">
-              Booking Reference ID
+          {/* Booking Reference Ticket Block */}
+          <div className="bg-plum-bg/70 border border-plum-soft rounded-2xl p-3.5 space-y-0.5">
+            <span className="text-[10px] text-plum-deep/70 uppercase tracking-widest font-extrabold block">
+              Booking Reference
             </span>
-            <span className="text-3xl font-black font-mono tracking-wider text-white">
+            <span className="text-2xl font-black font-mono tracking-wider text-plum-deep block">
               {confirmedBookingData.booking_id}
             </span>
           </div>
 
-          {/* Summary Card (Zero Prices) */}
-          <div className="bg-white border border-plum-soft rounded-2xl p-5 text-left space-y-3 text-xs sm:text-sm shadow-xs">
-            <div className="flex justify-between items-center border-b border-plum-soft/40 pb-2.5">
-              <span className="text-slate-500 font-medium">Customer Name</span>
-              <span className="font-extrabold text-plum-deep">
-                {bookingCustName}
-              </span>
+          {/* Appointment Details Box */}
+          <div className="bg-plum-bg/30 border border-plum-soft/60 rounded-2xl p-4 text-left space-y-2.5 text-xs sm:text-sm">
+            <div className="text-[11px] font-black uppercase tracking-wider text-plum-deep/80 border-b border-plum-soft/60 pb-1.5 font-display">
+              Your Appointment
             </div>
-
-            <div className="flex justify-between items-center border-b border-plum-soft/40 pb-2.5">
-              <span className="text-slate-500 font-medium">Phone Number</span>
-              <span className="font-mono font-bold text-plum-deep">
-                {bookingCustPhone}
-              </span>
+            <div className="flex justify-between items-center">
+              <span className="text-slate-500 font-medium">Customer:</span>
+              <span className="font-bold text-plum-deep">{bookingCustName}</span>
             </div>
-
-            <div className="flex justify-between items-center border-b border-plum-soft/40 pb-2.5">
-              <span className="text-slate-500 font-medium">Appointment Date</span>
-              <span className="font-extrabold text-plum-deep">
-                {formatDateDisplay(confirmedBookingData.booking_date)}
-              </span>
+            <div className="flex justify-between items-center">
+              <span className="text-slate-500 font-medium">Date:</span>
+              <span className="font-bold text-plum-deep">{formatDateDisplay(confirmedBookingData.booking_date)}</span>
             </div>
-
-            <div className="flex justify-between items-center border-b border-plum-soft/40 pb-2.5">
-              <span className="text-slate-500 font-medium">Appointment Time</span>
-              <span className="font-bold text-teal-dark font-mono">
-                {formatTime12h(confirmedBookingData.start_time)}
-              </span>
+            <div className="flex justify-between items-center">
+              <span className="text-slate-500 font-medium">Time:</span>
+              <span className="font-extrabold text-teal-dark font-mono">{formatTime12h(confirmedBookingData.start_time)}</span>
             </div>
-
-            {confirmedBookingData.special_notes && (
-              <div className="border-b border-plum-soft/40 pb-2.5">
-                <span className="text-slate-500 font-medium block">Special Instructions:</span>
-                <span className="text-slate-800 font-medium text-xs mt-0.5 block">{confirmedBookingData.special_notes}</span>
-              </div>
-            )}
-
-            <div className="flex justify-between items-center pt-1">
-              <span className="text-slate-500 font-medium">Payment Policy</span>
-              <span className="font-bold text-teal-dark">
-                Pay at center after grooming (Zero deposit required)
+            <div className="flex justify-between items-center">
+              <span className="text-slate-500 font-medium">Service:</span>
+              <span className="font-bold text-plum-deep">Pet Grooming</span>
+            </div>
+            <div className="flex justify-between items-start pt-2 border-t border-plum-soft/60">
+              <span className="text-slate-500 font-medium">Location:</span>
+              <span className="font-bold text-plum-deep text-right text-xs">
+                Sheikh Zayed – Gate 4,<br />
+                in front of New Cairo University – Chillout
               </span>
             </div>
           </div>
 
-          {/* Center Address Note */}
-          <div className="bg-plum-bg border border-plum-soft rounded-2xl p-4 text-xs text-slate-700 text-left space-y-1.5">
-            <p className="font-bold text-plum-deep flex items-center gap-1.5 font-display">
-              <MapPin className="w-4 h-4 text-teal-dark" />
-              <span>Center Location:</span>
-            </p>
-            <p className="text-slate-800 font-medium font-arabic">الشيخ زايد – زايد 4 – أمام جامعة القاهرة الجديدة – Chill Out</p>
-            <div className="flex items-center justify-between pt-1">
-              <span className="font-mono text-plum-deep font-bold">📞 01200888841</span>
-              <a
-                href="https://maps.app.goo.gl/RiG8uRZs7g8p4tFy6"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-teal-dark hover:underline font-bold inline-flex items-center gap-1"
-              >
-                <span>Google Maps</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
+          {/* Free Gift Reminder */}
+          <div className="bg-teal-veryLight/70 border border-teal-light/80 rounded-2xl p-3 text-center text-xs font-bold text-teal-deep">
+            🎁 Complete 3 grooming visits and get a FREE Gift!
           </div>
 
-          {/* Action buttons */}
-          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+          {/* Get Directions Button */}
+          <div>
+            <a
+              href="https://maps.app.goo.gl/RiG8uRZs7g8p4tFy6"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full bg-teal-primary hover:bg-teal-dark text-plum-deep font-extrabold py-3.5 px-4 rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-xs transition-colors cursor-pointer"
+            >
+              <Navigation className="w-4 h-4" />
+              <span>Get Directions</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
+
+          {/* Need to change your booking? Small text link */}
+          <div className="pt-1 text-center">
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-slate-500 hover:text-plum-deep underline transition-colors"
+            >
+              Need to change your booking? Contact us
+            </a>
+          </div>
+
+          {/* Bottom Actions */}
+          <div className="flex items-center gap-2.5 pt-2 border-t border-plum-soft/60">
             <button
               onClick={() => {
                 setConfirmedBookingData(null);
                 setSelectedTime('');
                 setSpecialNotes('');
               }}
-              className="flex-1 bg-gradient-to-r from-plum-primary to-plum-deep hover:from-plum-dark hover:to-plum-deep text-white font-extrabold py-3.5 px-4 rounded-xl shadow-md transition-all text-xs sm:text-sm cursor-pointer border border-plum-soft/20"
+              className="flex-1 bg-plum-deep hover:bg-plum-dark text-white font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
             >
-              Book Another Appointment
+              Book Another
             </button>
             <button
               onClick={() => onNavigate('home')}
-              className="flex-1 bg-plum-bg hover:bg-plum-soft/40 text-plum-deep font-bold py-3.5 px-4 rounded-xl transition-all text-xs sm:text-sm cursor-pointer border border-plum-soft"
+              className="flex-1 bg-plum-bg hover:bg-plum-soft/60 text-plum-deep font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer border border-plum-soft"
             >
               Back to Home
             </button>
@@ -305,21 +412,28 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
     );
   }
 
-  // --- FAST 4-STEP GUEST BOOKING FLOW ---
+  // --- 4-STEP GUEST BOOKING FLOW ---
   return (
     <div className="max-w-3xl mx-auto pb-16 space-y-8 animate-fade-in">
       {/* Top Header */}
       <div className="text-center space-y-2">
         <div className="inline-flex items-center gap-2 bg-teal-veryLight text-teal-deep px-3.5 py-1 rounded-full text-xs font-black uppercase tracking-wider border border-teal-light/40">
           <Sparkles className="w-3.5 h-3.5 text-teal-primary" />
-          Easy 30-Second Reservation
+          Quick 30-Second Guest Booking
         </div>
         <h1 className="text-3xl sm:text-5xl font-black text-plum-deep tracking-tight font-display">
           Book Grooming Appointment
         </h1>
         <p className="text-slate-600 text-xs sm:text-sm max-w-md mx-auto leading-relaxed">
-          Select your date and preferred time slot to reserve your grooming session in seconds. No login required.
+          Select your day and preferred 60-minute time slot. No advance deposit or account registration required.
         </p>
+
+        {/* 50% OFF Badge */}
+        <div className="pt-1">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-teal-deep to-teal-dark text-white font-black text-xs shadow-xs">
+            ✨ 50% OFF Applied to All Sessions
+          </span>
+        </div>
       </div>
 
       <form onSubmit={handleConfirmBooking} className="space-y-6">
@@ -334,7 +448,7 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
                 Choose Date
               </h2>
             </div>
-            <span className="text-xs text-teal-dark font-bold">Next 5 days available</span>
+            <span className="text-xs text-teal-dark font-bold">5-Day Booking Window</span>
           </div>
 
           {/* 5-Day Horizontal Pills */}
@@ -346,11 +460,10 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
                   key={item.iso}
                   type="button"
                   onClick={() => setSelectedDate(item.iso)}
-                  className={`p-3.5 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-center cursor-pointer ${
-                    isSelected
+                  className={`p-3.5 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-center cursor-pointer ${isSelected
                       ? 'border-plum-deep bg-gradient-to-br from-plum-deep via-plum-dark to-plum-primary text-white font-extrabold shadow-md transform -translate-y-0.5 ring-2 ring-teal-primary/40'
                       : 'border-plum-soft bg-white hover:border-plum-primary/50 hover:bg-plum-bg/60 text-plum-deep font-semibold'
-                  }`}
+                    }`}
                 >
                   <span className={`text-xs uppercase font-extrabold ${isSelected ? 'text-teal-light' : 'text-slate-500'}`}>
                     {item.dayName}
@@ -361,6 +474,11 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
                   {item.isToday && (
                     <span className={`text-[9px] px-1.5 py-0.5 rounded-full mt-1 font-bold ${isSelected ? 'bg-teal-primary text-plum-deep' : 'bg-plum-bg text-plum-deep border border-plum-soft'}`}>
                       Today
+                    </span>
+                  )}
+                  {item.isFriday && (
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full mt-1 font-semibold ${isSelected ? 'text-teal-light' : 'text-slate-400'}`}>
+                      Starts 3 PM
                     </span>
                   )}
                 </button>
@@ -380,9 +498,6 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
                 Choose Time
               </h2>
             </div>
-            <span className="text-xs text-teal-dark font-bold">
-              Start times: 1:00 PM – 11:00 PM
-            </span>
           </div>
 
           {loadingSlots ? (
@@ -390,10 +505,21 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
               <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-plum-primary"></div>
               <span className="ml-3 text-xs text-slate-500 font-semibold">Checking live availability...</span>
             </div>
-          ) : slots.length === 0 ? (
+          ) : slotsError ? (
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center text-xs text-rose-800 space-y-3">
+              <p className="font-bold text-sm">Unable to load available times. Please try again.</p>
+              <button
+                type="button"
+                onClick={() => fetchSlots(selectedDate)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 text-white hover:bg-rose-700 transition cursor-pointer shadow-sm"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Retry
+              </button>
+            </div>
+          ) : slots.length === 0 || slots.every((s) => !s.available) ? (
             <div className="bg-gold-bg border border-gold-primary/30 rounded-2xl p-6 text-center text-xs text-plum-deep space-y-1">
-              <p className="font-bold">No slots available for this day.</p>
-              <p className="text-slate-600">Please choose another day above.</p>
+              <p className="font-bold text-sm">No appointments available for this day. Please choose another date.</p>
             </div>
           ) : (
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2.5">
@@ -407,13 +533,12 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
                     type="button"
                     disabled={!isAvailable}
                     onClick={() => setSelectedTime(slot.time)}
-                    className={`py-3 px-2 rounded-xl text-xs font-bold transition-all text-center flex flex-col items-center justify-center cursor-pointer ${
-                      isSelected
+                    className={`py-3 px-2 rounded-xl text-xs font-bold transition-all text-center flex flex-col items-center justify-center cursor-pointer ${isSelected
                         ? 'bg-plum-deep text-white shadow-md ring-2 ring-teal-primary/50 transform scale-102'
                         : isAvailable
-                        ? 'bg-white border border-plum-soft hover:border-teal-primary hover:bg-teal-bg/40 text-plum-deep'
-                        : 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed line-through opacity-50'
-                    }`}
+                          ? 'bg-white border border-plum-soft hover:border-teal-primary hover:bg-teal-bg/40 text-plum-deep'
+                          : 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed line-through opacity-50'
+                      }`}
                   >
                     <span className="font-mono font-bold">{formatTime12h(slot.time)}</span>
                     <span className={`text-[9px] mt-0.5 font-medium ${isSelected ? 'text-teal-light' : isAvailable ? 'text-teal-dark' : 'text-slate-400'}`}>
@@ -437,11 +562,10 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
                 Customer Information
               </h2>
             </div>
-            <span className="text-xs text-slate-500 font-medium">Guest Booking</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-            {/* Left Column: Short Customer Input Fields */}
+            {/* Left Column: Customer Input Fields */}
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-extrabold text-plum-deep uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
@@ -454,7 +578,7 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
                   required
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  placeholder="e.g. Sarah Ahmed"
+                  placeholder="Enter your full name"
                   className="w-full bg-white border border-plum-soft rounded-xl px-4 py-3 text-sm font-semibold text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-primary shadow-xs"
                 />
               </div>
@@ -462,17 +586,21 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
               <div>
                 <label className="block text-xs font-extrabold text-plum-deep uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
                   <Phone className="w-3.5 h-3.5 text-teal-dark" />
-                  <span>Phone Number</span>
+                  <span>Egyptian Mobile Number</span>
                   <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="tel"
                   required
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="e.g. 01012345678"
-                  className="w-full bg-white border border-plum-soft rounded-xl px-4 py-3 text-sm font-semibold font-mono text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-primary shadow-xs"
+                  onChange={handlePhoneChange}
+                  placeholder="Enter your mobile number"
+                  className={`w-full bg-white border rounded-xl px-4 py-3 text-sm font-semibold font-mono text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 shadow-xs ${phoneError ? 'border-rose-400 focus:ring-rose-400' : 'border-plum-soft focus:ring-teal-primary'
+                    }`}
                 />
+                {phoneError && (
+                  <p className="text-[11px] text-rose-500 font-medium mt-1">{phoneError}</p>
+                )}
               </div>
 
               <div>
@@ -482,14 +610,14 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
                 <textarea
                   value={specialNotes}
                   onChange={(e) => setSpecialNotes(e.target.value)}
-                  placeholder="e.g. Any special instructions or preferences..."
+                  placeholder="Any notes for your pet (optional)"
                   rows={2}
                   className="w-full bg-white border border-plum-soft rounded-xl px-3.5 py-2.5 text-xs font-medium text-plum-deep placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-primary shadow-xs"
                 />
               </div>
             </div>
 
-            {/* Right Column: Step 4 Compact Summary & Confirm (Zero Prices) */}
+            {/* Right Column: Step 4 Compact Summary & Confirm */}
             <div className="bg-plum-deep text-white rounded-2xl p-5 sm:p-6 space-y-4 shadow-xl border border-plum-dark">
               <div className="flex items-center justify-between border-b border-plum-dark pb-3">
                 <h3 className="font-extrabold text-sm uppercase tracking-wider text-teal-light font-display">
@@ -502,6 +630,11 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
 
               <div className="space-y-3 text-xs">
                 <div className="flex justify-between">
+                  <span className="text-plum-soft">Session:</span>
+                  <span className="font-bold text-white">Grooming Appointment (60 mins)</span>
+                </div>
+
+                <div className="flex justify-between">
                   <span className="text-plum-soft">Date:</span>
                   <span className="font-bold text-white">{formatDateDisplay(selectedDate) || '—'}</span>
                 </div>
@@ -512,21 +645,17 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
                 </div>
 
                 <div className="flex justify-between">
-                  <span className="text-plum-soft">Name:</span>
+                  <span className="text-plum-soft">Customer Name:</span>
                   <span className="font-bold text-white">
                     {fullName.trim() || '—'}
                   </span>
                 </div>
 
                 <div className="flex justify-between">
-                  <span className="text-plum-soft">Phone:</span>
+                  <span className="text-plum-soft">Phone Number:</span>
                   <span className="font-mono text-white">
                     {phone.trim() || '—'}
                   </span>
-                </div>
-
-                <div className="border-t border-plum-dark pt-3 text-[11px] text-plum-soft bg-plum-dark/60 p-2.5 rounded-xl text-center">
-                  ✨ Zero deposit required. Pay at the center after grooming.
                 </div>
               </div>
 
@@ -537,7 +666,7 @@ export default function BookNow({ onNavigate, onBookingComplete }) {
                 </div>
               )}
 
-              {/* Action Button: Confirm Booking */}
+              {/* Action Button: Confirm Booking (Disabled while saving) */}
               <button
                 type="submit"
                 disabled={submitting}

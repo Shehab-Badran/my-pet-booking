@@ -9,7 +9,16 @@ def seed_db():
     
     # Auto-migrate SQLite missing columns if any
     with engine.connect() as conn:
-        for col, col_type in [("customer_name", "VARCHAR"), ("customer_phone", "VARCHAR")]:
+        for col, col_type in [
+            ("customer_name", "VARCHAR"),
+            ("customer_phone", "VARCHAR"),
+            ("cancellation_reason", "VARCHAR"),
+            ("booking_source", "VARCHAR"),
+            ("final_invoice_amount", "NUMERIC(10, 2)"),
+            ("payment_status", "VARCHAR DEFAULT 'unpaid'"),
+            ("payment_date", "DATE"),
+            ("invoice_notes", "TEXT"),
+        ]:
             try:
                 conn.execute(text(f"ALTER TABLE bookings ADD COLUMN {col} {col_type}"))
                 conn.commit()
@@ -25,14 +34,22 @@ def seed_db():
 
     db = SessionLocal()
     try:
-        # 1. Business Settings (Internal Scheduling Rules - 1:00 PM to 12:00 AM, 5-day advance booking)
+        # 1. Business Settings (Internal Scheduling Rules - Friday 3 PM–11 PM, Sat-Thu 12 PM–11 PM, 5-day advance booking)
         settings_to_seed = {
-            "opening_time": "13:00:00",
-            "closing_time": "00:00:00",
-            "working_days": "Every day (Monday - Sunday)",
+            "opening_time": "12:00:00",
+            "opening_time_friday": "15:00:00",
+            "closing_time": "23:00:00",
+            "working_days": "Sat - Thu: 12:00 PM - 11:00 PM, Friday: 3:00 PM - 11:00 PM",
             "max_simultaneous_bookings": "1",
             "max_booking_days_ahead": "5",
-            "slot_interval_minutes": "60"
+            "slot_interval_minutes": "60",
+            "homepage_offer_text": "50% OFF All Grooming Sessions",
+            "offer_discount_percentage": "50",
+            "loyalty_program_enabled": "true",
+            "loyalty_reward_description": "1 Free Shower",
+            "telegram_notifications_enabled": "false",
+            "telegram_bot_token": "",
+            "telegram_chat_id": ""
         }
 
         print("Seeding internal business settings...")

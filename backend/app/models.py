@@ -98,7 +98,13 @@ class Booking(Base):
     end_time = Column(Time, nullable=False)
     price = Column(Numeric(10, 2), nullable=True, default=0)
     special_notes = Column(Text, nullable=True)
-    status = Column(String, default="confirmed", nullable=False)  # 'confirmed', 'completed', 'no-show', 'blocked'
+    cancellation_reason = Column(String, nullable=True)  # e.g. 'Customer cancelled by phone'
+    booking_source = Column(String, default="website", nullable=True)  # 'website', 'phone', 'whatsapp', 'walk-in'
+    status = Column(String, default="confirmed", nullable=False)  # 'confirmed', 'completed', 'cancelled', 'no-show', 'blocked'
+    final_invoice_amount = Column(Numeric(10, 2), nullable=True)
+    payment_status = Column(String, default="unpaid", nullable=True)  # 'paid', 'unpaid', 'refunded'
+    payment_date = Column(Date, nullable=True)
+    invoice_notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -115,6 +121,25 @@ class Booking(Base):
     user = relationship("User", back_populates="bookings")
     pet = relationship("Pet", back_populates="bookings")
     service = relationship("Service", back_populates="bookings")
+    audit_logs = relationship("BookingAuditLog", back_populates="booking", cascade="all, delete-orphan", order_by="desc(BookingAuditLog.created_at)")
+
+
+class BookingAuditLog(Base):
+    __tablename__ = "booking_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    user_name = Column(String, nullable=True)
+    action = Column(String, nullable=False)  # 'created', 'status_changed', 'rescheduled', 'details_updated', 'restored'
+    old_value = Column(Text, nullable=True)
+    new_value = Column(Text, nullable=True)
+    reason = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    booking = relationship("Booking", back_populates="audit_logs")
+    user = relationship("User")
 
 
 class Setting(Base):
@@ -122,3 +147,18 @@ class Setting(Base):
 
     key = Column(String, primary_key=True, index=True)
     value = Column(String, nullable=False)
+
+
+class CustomerRewardRedemption(Base):
+    __tablename__ = "customer_reward_redemptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_phone = Column(String, nullable=False, index=True)
+    customer_name = Column(String, nullable=True)
+    redeemed_at = Column(DateTime, default=datetime.utcnow)
+    redeemed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    redeemed_by_name = Column(String, nullable=True)
+    reward_description = Column(String, nullable=False)
+    notes = Column(Text, nullable=True)
+
+    redeemed_by = relationship("User")

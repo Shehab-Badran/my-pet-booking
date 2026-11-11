@@ -128,17 +128,44 @@ class PetResponse(PetBase):
     class Config:
         from_attributes = True
 
-# --- Booking Creation Request ---
+# --- Audit Log Schema ---
+class BookingAuditLogResponse(BaseModel):
+    id: int
+    booking_id: int
+    user_id: Optional[int] = None
+    user_name: Optional[str] = None
+    action: str
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+    reason: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+# --- Booking Creation Request (Public Guest Grooming) ---
 class BookingCreate(BaseModel):
-    name: Optional[str] = Field(None, max_length=100)
-    phone: Optional[str] = Field(None, max_length=30)
+    name: str = Field(..., min_length=2, max_length=100)
+    phone: str = Field(..., min_length=6, max_length=30)
     booking_date: date
     start_time: time  # e.g. 13:00:00
     special_notes: Optional[str] = None
-    pet_type: Optional[str] = None
-    pet_breed: Optional[str] = None
-    pet_size: Optional[str] = None
     service_id: Optional[int] = None
+
+# --- Admin Manual Booking Creation Request (Phone / WhatsApp / Walk-in) ---
+class AdminBookingCreate(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    phone: str = Field(..., min_length=6, max_length=30)
+    booking_date: date
+    start_time: time
+    special_notes: Optional[str] = None
+    booking_source: Optional[str] = Field("phone", pattern="^(phone|whatsapp|walk-in|website)$")
+
+# --- Admin Booking Edit Details ---
+class BookingUpdateDetails(BaseModel):
+    customer_name: Optional[str] = Field(None, min_length=2, max_length=100)
+    customer_phone: Optional[str] = Field(None, min_length=6, max_length=30)
+    special_notes: Optional[str] = None
 
 # --- Booking Response ---
 class BookingResponse(BaseModel):
@@ -154,16 +181,35 @@ class BookingResponse(BaseModel):
     end_time: time
     price: Optional[Decimal] = Decimal(0)
     special_notes: Optional[str] = None
+    cancellation_reason: Optional[str] = None
+    booking_source: Optional[str] = "website"
     status: str
+    final_invoice_amount: Optional[Decimal] = None
+    payment_status: Optional[str] = "unpaid"
+    payment_date: Optional[date] = None
+    invoice_notes: Optional[str] = None
+    service_name_display: Optional[str] = "Grooming Appointment"
     created_at: datetime
     updated_at: Optional[datetime] = None
+    audit_logs: Optional[List[BookingAuditLogResponse]] = []
 
     class Config:
         from_attributes = True
 
 # --- Booking Status / Reschedule / Block ---
 class BookingStatusUpdate(BaseModel):
-    status: str = Field(..., pattern="^(confirmed|completed|no-show|blocked)$")
+    status: str = Field(..., pattern="^(confirmed|completed|cancelled|no-show|blocked)$")
+    reason: Optional[str] = None
+    final_invoice_amount: Optional[Decimal] = None
+    payment_status: Optional[str] = None
+    payment_date: Optional[date] = None
+    invoice_notes: Optional[str] = None
+
+class BookingInvoiceUpdate(BaseModel):
+    final_invoice_amount: Decimal = Field(..., ge=0)
+    payment_status: str = Field("paid", pattern="^(paid|unpaid|refunded)$")
+    payment_date: Optional[date] = None
+    invoice_notes: Optional[str] = None
 
 class BookingReschedule(BaseModel):
     booking_date: date
@@ -173,16 +219,128 @@ class AdminBlockSlotRequest(BaseModel):
     booking_date: date
     start_time: time
     duration: Optional[int] = 60
-    reason: Optional[str] = "Admin Slot Block / Maintenance"
+    reason: Optional[str] = "Staff Maintenance / Slot Block"
 
 # --- Availability Slot Response ---
 class TimeSlot(BaseModel):
     time: time
     available: bool
 
+# --- Friday Conflict Warning Schema ---
+class FridayConflictBooking(BaseModel):
+    id: int
+    booking_id: str
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    booking_date: date
+    start_time: time
+    status: str
+
+# --- Customer Appointment History & Loyalty ---
+class CustomerHistoryResponse(BaseModel):
+    phone: str
+    name: Optional[str] = None
+    total_appointments: int
+    confirmed_appointments: int
+    completed_appointments: int
+    cancelled_appointments: int = 0
+    no_show_appointments: int
+    total_paid_revenue: Decimal = Decimal(0)
+    loyalty_stamps: int = 0
+    rewards_unlocked: int = 0
+    rewards_redeemed: int = 0
+    reward_available: bool = False
+    reward_description: str = "Complimentary Grooming Add-on or Pampering Treatment"
+    program_enabled: bool = True
+    bookings: List[BookingResponse]
+
+# --- My Pet Rewards Loyalty Schemas ---
+class LoyaltyProgressResponse(BaseModel):
+    phone: str
+    customer_name: Optional[str] = None
+    stamps_count: int
+    total_lifetime_stamps: int
+    rewards_unlocked: int
+    rewards_redeemed: int
+    reward_available: bool
+    reward_description: str
+    program_enabled: bool
+
+class LoyaltyRedeemRequest(BaseModel):
+    phone: str
+    notes: Optional[str] = None
+
+class LoyaltyRedeemResponse(BaseModel):
+    success: bool
+    message: str
+    phone: str
+    rewards_unlocked: int
+    rewards_redeemed: int
+
+# --- Simplified Admin Customer List Item ---
+class CustomerListItem(BaseModel):
+    phone: str
+    name: str
+    completed_visits: int
+    last_appointment_date: Optional[date] = None
+    loyalty_stamps: int
+    rewards_unlocked: int
+    reward_available: bool
+
+# --- Revenue Report Schemas ---
+class RevenueReportItem(BaseModel):
+    id: int
+    booking_id: str
+    customer_name: str
+    customer_phone: str
+    booking_date: date
+    payment_date: Optional[date] = None
+    booking_source: str
+    status: str
+    payment_status: str
+    final_invoice_amount: Decimal
+    invoice_notes: Optional[str] = None
+
+class MonthlyRevenueReport(BaseModel):
+    year: int
+    month: int
+    month_name: str
+    total_website_bookings: int
+    completed_website_bookings: int
+    paid_website_invoices_count: int
+    total_website_revenue: Decimal
+    unpaid_website_bookings_count: int
+    average_website_invoice_value: Decimal
+    total_manual_bookings: int
+    completed_manual_bookings: int
+    paid_manual_invoices_count: int
+    total_manual_revenue: Decimal
+    grand_total_revenue: Decimal
+    items: List[RevenueReportItem]
+
+# --- Telegram Test Schema ---
+class TelegramTestRequest(BaseModel):
+    bot_token: Optional[str] = None
+    chat_id: Optional[str] = None
+    message: Optional[str] = None
+
 # --- Dashboard Statistics ---
 class DashboardStats(BaseModel):
-    today_count: int
-    upcoming_count: int
+    today_total: int            # All customer appointments scheduled today (confirmed + completed + no-show + cancelled)
+    today_confirmed: int        # Active confirmed appointments today
+    today_completed: int        # Completed appointments today
+    today_cancelled: int = 0    # Cancelled appointments today
+    today_no_show: int          # No-show / phone-cancelled appointments today
+    today_blocked: int          # Blocked periods today (excluded from customer total)
+    upcoming_confirmed: int     # Future confirmed appointments
+    total_bookings: int = 0     # All-time customer bookings
+    total_completed: int = 0    # All-time completed
+    total_cancelled: int = 0    # All-time cancelled
+    total_no_show: int = 0      # All-time no-show
+    total_revenue_collected: Decimal = Decimal(0)
     recent_bookings: List[BookingResponse]
-    capacity_percentage: float
+    capacity_percentage: float  # Occupied slots vs total available schedule capacity
+    capacity_explanation: str   # Human explanation of how capacity is calculated
+    friday_conflicts_count: int # Existing Friday bookings starting before 3 PM
+    friday_conflicts: List[FridayConflictBooking] = []
+

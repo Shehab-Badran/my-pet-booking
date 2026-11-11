@@ -331,10 +331,17 @@ export default function App() {
 
             {/* Working Hours */}
             <div className="space-y-2 text-xs">
-              <h4 className="font-extrabold text-white uppercase tracking-wider text-xs font-display">Working Hours</h4>
-              <p className="text-slate-200">Every day: 12:00 PM – 12:00 AM</p>
-              <p className="text-teal-light font-semibold">Open 7 days a week (No regular days off)</p>
-              <p className="text-plum-soft">Shower, Styling, and complete grooming care</p>
+              <h4 className="font-extrabold text-white uppercase tracking-wider text-xs font-display">Hours of Operation</h4>
+              <div>
+                <p className="text-white font-bold">Store Hours:</p>
+                <p className="text-slate-200">Daily: 11:00 AM – 11:00 PM</p>
+              </div>
+              <div className="pt-1">
+                <p className="text-teal-light font-bold">Grooming Appointment Times:</p>
+                <p className="text-slate-200">Friday: 3:00 PM – 11:00 PM</p>
+                <p className="text-slate-200">Saturday – Thursday: 12:00 PM – 11:00 PM</p>
+                <p className="text-plum-soft/80 text-[11px] mt-0.5">60-minute sessions · Last appointment finishes at 11:00 PM</p>
+              </div>
             </div>
 
             {/* Exact Location & Contact */}
@@ -344,26 +351,34 @@ export default function App() {
               <p className="text-slate-200 font-mono">
                 📞 <a href="tel:01200888841" className="text-teal-light hover:text-white underline font-bold">01200888841</a>
               </p>
-              <p className="text-slate-200 leading-relaxed font-arabic">
-                📍 الشيخ زايد – زايد 4<br />
-                أمام جامعة القاهرة الجديدة – Chill Out
+              <p className="text-slate-200 leading-relaxed">
+                📍 Sheikh Zayed – Gate 4<br />
+                In front of New Cairo University – Chillout
               </p>
-              <div className="pt-2">
+              <div className="flex flex-wrap gap-2 pt-2">
                 <a
                   href="https://maps.app.goo.gl/RiG8uRZs7g8p4tFy6"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="bg-teal-primary hover:bg-teal-dark text-plum-deep font-extrabold px-3.5 py-1.5 rounded-lg inline-flex items-center gap-1.5 text-xs shadow-xs transition-colors cursor-pointer"
+                  className="bg-teal-primary hover:bg-teal-dark text-plum-deep font-extrabold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 text-xs shadow-xs transition-colors cursor-pointer"
                 >
                   <span>📍 View on Google Maps</span>
                   <ExternalLink className="w-3 h-3" />
+                </a>
+                <a
+                  href="https://wa.me/201200888841?text=Hello%20My%20Pet%20Center,%20I%20have%20an%20inquiry%20about%20pet%20grooming"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-[#25D366] hover:bg-[#20ba5a] text-white font-extrabold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 text-xs shadow-xs transition-colors cursor-pointer"
+                >
+                  <span>💬 WhatsApp</span>
                 </a>
               </div>
             </div>
           </div>
 
           <div className="border-t border-plum-dark/80 pt-6 flex flex-col sm:flex-row justify-between items-center text-xs text-plum-soft/70 gap-3">
-            <span>&copy; {new Date().getFullYear()} My Pet Center. All rights reserved.</span>
+            <span>&copy; {new Date().getFullYear()} My Pet Center. All rights reserved. English-only service.</span>
             <div className="flex items-center gap-4">
               <span>Sheikh Zayed City, Egypt</span>
               <button

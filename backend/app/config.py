@@ -5,10 +5,10 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./pet_booking.db"
     PORT: int = 8000
     HOST: str = "0.0.0.0"
-    JWT_SECRET: str
+    JWT_SECRET: str = "super_secret_jwt_key_mypetcenter_2026"
     ADMIN_EMAIL: str = "admin@mypetcenter.com"
     ADMIN_PHONE: str = "01200888841"
-    ADMIN_PASSWORD: str
+    ADMIN_PASSWORD: str = "AdminPassword#2026"
 
     # SMTP Configuration for Password Recovery
     SMTP_HOST: Optional[str] = None

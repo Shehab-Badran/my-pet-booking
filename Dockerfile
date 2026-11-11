@@ -21,8 +21,10 @@ RUN chown -R user:user /app
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend code and built frontend
+# Copy backend code, alembic migrations, and built frontend
 COPY --chown=user:user backend/ ./backend/
+COPY --chown=user:user alembic/ ./alembic/
+COPY --chown=user:user alembic.ini ./alembic.ini
 COPY --chown=user:user --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 USER user
@@ -34,4 +36,4 @@ ENV HOME=/home/user \
 
 EXPOSE 7860
 
-CMD ["sh", "-c", "python -m backend.app.seed && uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-7860}"]
+CMD ["sh", "-c", "python -m backend.app.migrate && uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-7860}"]
